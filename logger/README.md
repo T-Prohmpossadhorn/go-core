@@ -1,277 +1,336 @@
-# Logger
+# Logger Package
 
-A flexible, extensible logging package for Go applications with OpenTelemetry integration.
+The `logger` package is a lightweight, high-performance, and thread-safe logging solution for Go applications, built on top of the Zap logging library (v1.26.0). It provides structured logging with support for console and file output, JSON and Zap console formats, a variety of field types, and integration with OpenTelemetry (v1.29.0) for trace-aware logging. Designed for simplicity and efficiency, the package is ideal for applications requiring robust logging with minimal configuration.
+
+## Table of Contents
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Basic Logging (Console, JSON)](#basic-logging-console-json)
+  - [File Output with Zap Console Format](#file-output-with-zap-console-format)
+  - [Context-Aware Logging with OpenTelemetry](#context-aware-logging-with-opentelemetry)
+  - [Advanced Configuration](#advanced-configuration)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
-
-- Simple, consistent API for logging
-- Support for [zap](https://github.com/uber-go/zap) and [logrus](https://github.com/sirupsen/logrus) logging backends
-- OpenTelemetry integration via context
-- Structured logging with strongly typed fields
-- Multiple log levels (Debug, Info, Warn, Error, Fatal)
-- Easy configuration
-- Support for global logger instance
-- Easily extendable to support other logging libraries
+- **High-Performance Logging**: Built on Zap v1.26.0, leveraging its efficient logging pipeline for minimal overhead.
+- **Log Levels**: Supports `debug`, `info`, `warn`, `error`, and `fatal` (fatal exits the program).
+- **Output Options**: Logs to console or file, with JSON or Zap console formats.
+- **Structured Logging**: Supports field types: `string`, `int`, `float`, `bool`, `error`, and `any` (for arbitrary data like slices or structs).
+- **Context Support**: Offers both context-aware (`InfoContext`) and non-context-aware (`Info`) logging functions.
+- **OpenTelemetry Integration**: Automatically includes `trace_id` and `span_id` from the context for trace-aware logging using OpenTelemetry v1.29.0.
+- **Thread-Safety**: Ensures safe concurrent access using `sync.RWMutex`.
+- **Performance Optimizations**: Minimizes allocations and contention with Zap’s encoders and efficient buffer management.
+- **Comprehensive Testing**: Includes tests for all log levels, field types, and output combinations.
 
 ## Installation
+To install the `logger` package, use `go get`:
 
 ```bash
-go get github.com/T-Prohmpossadhorn/logger
+go get github.com/your-org/logger
 ```
 
-## Basic Usage
+### Dependencies
+The package requires the following dependencies, which will be installed automatically with `go get`:
+
+- `go.uber.org/zap@v1.26.0`: Core logging library.
+- `go.opentelemetry.io/otel@v1.29.0`: OpenTelemetry for trace integration.
+- `github.com/stretchr/testify@v1.8.4`: Testing framework (for tests only).
+
+Add them to your `.LINE_ORDERgo.mod` explicitly if needed:
+
+```bash
+go get go.uber.org/zap@v1.26.0
+go get go.opentelemetry.io/otel@v1.29.0
+go get github.com/stretchr/testify@v1.8.4
+```
+
+### Go Version
+The package is compatible with Go 1.24.2 or later. Ensure your Go version meets this requirement:
+
+```bash
+go version
+```
+
+## Usage
+The `logger` package is designed for ease of use, with a simple API for initializing, configuring, and logging messages. Below are examples demonstrating various use cases.
+
+### Basic Logging (Console, JSON)
+Initialize the logger with default settings (info level, console output, JSON format) and log a message with structured fields:
 
 ```go
 package main
 
 import (
-    "context"
-    
-    "github.com/T-Prohmpossadhorn/logger"
+    "github.com/your-org/logger"
 )
 
 func main() {
-    // Create a logger with default configuration (uses zap)
-    log := logger.New(logger.DefaultConfig())
-    
-    ctx := context.Background()
-    
-    // Log messages at different levels
-    log.Debug(ctx, "This is a debug message")
-    log.Info(ctx, "This is an info message")
-    log.Warn(ctx, "This is a warning message")
-    log.Error(ctx, "This is an error message")
-    log.Fatal(ctx, "This is a fatal message") // This will exit the program
+    if err := logger.Init(); err != nil {
+        panic("Failed to initialize logger: " + err.Error())
+    }
+    defer logger.Sync()
+
+    logger.Info("Application started",
+        logger.String("app", "example"),
+        logger.Int("version", 1),
+        logger.Float("uptime", 3.14),
+        logger.Bool("active", true),
+        logger.ErrField(errors.New("initialization error")),
+        logger.Any("metadata", []string{"x", "y"}),
+    )
 }
 ```
 
-## Configuration
-
-You can configure the logger using the `Config` struct:
-
-```go
-config := logger.Config{
-    Type:        logger.ZapLogger, // or logger.LogrusLogger
-    Level:       logger.Info,
-    Output:      os.Stdout,
-    ServiceName: "my-service",
-}
-
-log := logger.New(config)
+**Output (JSON)**:
+```json
+{"level":"info","ts":"2025-05-01T12:00:00.000Z","caller":"main.go:12","msg":"Application started","app":"example","version":1,"uptime":3.14,"active":true,"error":"initialization error","metadata":["x","y"]}
 ```
 
-## Structured Logging
-
-This package supports structured logging with strongly typed fields:
-
-```go
-log.Info(ctx, "User logged in",
-    logger.String("user_id", "12345"),
-    logger.Int("login_count", 5),
-    logger.Bool("is_admin", false),
-    logger.Error(err), // For error fields
-)
-```
-
-## OpenTelemetry Integration
-
-The logger will automatically extract trace and span IDs from the context if available:
-
-```go
-// In a function where ctx contains OpenTelemetry span
-log.Info(ctx, "Processing request")
-
-// Output will include trace_id and span_id fields
-```
-
-### Complete OpenTelemetry Example
-
-Here's a full example of integrating the logger with OpenTelemetry:
+### File Output with Zap Console Format
+Configure the logger to write to a file in Zap’s console format (human-readable, tab-separated):
 
 ```go
 package main
 
 import (
     "context"
-    "log"
-    "os"
+    "github.com/your-org/logger"
+)
 
-    "github.com/T-Prohmpossadhorn/logger"
-    "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
-    "go.opentelemetry.io/otel/sdk/resource"
-    sdktrace "go.opentelemetry.io/otel/sdk/trace"
-    semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+func main() {
+    cfg := logger.LoggerConfig{
+        Level:      "info",
+        Output:     "file",
+        FilePath:   "app.log",
+        JSONFormat: false,
+    }
+    if err := logger.InitWithConfig(cfg); err != nil {
+        panic("Failed to initialize logger: " + err.Error())
+    }
+    defer logger.Sync()
+
+    ctx := context.Background()
+    logger.InfoContext(ctx, "Application started",
+        logger.String("app", "example"),
+        logger.Int("version", 1),
+    )
+}
+```
+
+**Output (app.log, Zap console format)**:
+```
+2025-05-01T12:00:00.000Z	info	main.go:15	Application started	{"app": "example", "version": 1}
+```
+
+### Context-Aware Logging with OpenTelemetry
+Use context-aware logging to include OpenTelemetry trace fields (`trace_id`, `span_id`):
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/your-org/logger"
     "go.opentelemetry.io/otel/trace"
 )
 
 func main() {
-    // Initialize OpenTelemetry
-    tp, err := initTracer()
-    if err != nil {
-        log.Fatal(err)
+    if err := logger.Init(); err != nil {
+        panic("Failed to initialize logger: " + err.Error())
     }
-    defer func() {
-        if err := tp.Shutdown(context.Background()); err != nil {
-            log.Printf("Error shutting down tracer provider: %v", err)
-        }
-    }()
+    defer logger.Sync()
 
-    // Initialize logger
-    logConfig := logger.DefaultConfig()
-    logConfig.ServiceName = "example-service"
-    log := logger.New(logConfig)
-
-    // Create a span
-    tracer := otel.Tracer("example-tracer")
-    ctx, span := tracer.Start(context.Background(), "example-operation")
+    // Mock OpenTelemetry tracer
+    tracer := trace.NewNoopTracerProvider().Tracer("example")
+    ctx, span := tracer.Start(context.Background(), "example-span")
     defer span.End()
 
-    // Log with the span context
-    // The logger will automatically extract and add trace_id and span_id fields
-    log.Info(ctx, "Operation started")
-
-    // Add more span events
-    span.AddEvent("Processing item")
-
-    // Log within the span context
-    processItem(ctx, log)
-
-    log.Info(ctx, "Operation completed")
-}
-
-func processItem(ctx context.Context, log logger.Logger) {
-    // Create a child span
-    tracer := otel.Tracer("example-tracer")
-    ctx, span := tracer.Start(ctx, "process-item")
-    defer span.End()
-
-    // The log will include the child span's ID
-    log.Debug(ctx, "Processing item details", 
-        logger.String("item_id", "item-123"),
-        logger.Int("priority", 1))
-
-    // Simulate error
-    err := simulateWork()
-    if err != nil {
-        // Record the error in the span
-        span.RecordError(err)
-        // Log the error with the same context
-        log.Error(ctx, "Failed to process item", logger.Error(err))
-    }
-}
-
-func simulateWork() error {
-    // Simulate work
-    return nil // or return an error
-}
-
-func initTracer() (*sdktrace.TracerProvider, error) {
-    // Create stdout exporter
-    exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-    if err != nil {
-        return nil, err
-    }
-
-    // Create trace provider
-    tp := sdktrace.NewTracerProvider(
-        sdktrace.WithSampler(sdktrace.AlwaysSample()),
-        sdktrace.WithBatcher(exporter),
-        sdktrace.WithResource(resource.NewWithAttributes(
-            semconv.SchemaURL,
-            semconv.ServiceNameKey.String("example-service"),
-        )),
+    logger.InfoContext(ctx, "Processing request",
+        logger.String("request_id", "abc123"),
+        logger.Any("params", map[string]string{"key": "value"}),
     )
-    otel.SetTracerProvider(tp)
-    return tp, nil
 }
 ```
 
-This example demonstrates:
-- Initializing OpenTelemetry with a tracer provider
-- Creating spans and child spans
-- Using the logger within span contexts
-- How trace and span IDs are automatically included in log entries
-- Recording errors in both logs and spans
+**Output (JSON)**:
+```json
+{"level":"info","ts":"2025-05-01T12:00:00.000Z","caller":"main.go:20","msg":"Processing request","request_id":"abc123","params":{"key":"value"},"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}
+```
 
-## Creating Loggers with Preset Fields
-
-You can create loggers with preset fields that will be included in all log entries:
+### Advanced Configuration
+Customize the logger with specific log levels, output destinations, and formats:
 
 ```go
-// Create a logger with user context
-userLogger := log.WithFields(
-    logger.String("user_id", "12345"),
-    logger.String("username", "johndoe"),
+package main
+
+import (
+    "github.com/your-org/logger"
 )
 
-// All these logs will include the user_id and username fields
-userLogger.Info(ctx, "User viewed dashboard")
-userLogger.Warn(ctx, "Failed login attempt")
+func main() {
+    cfg := logger.LoggerConfig{
+        Level:      "debug", // Enable debug and higher levels
+        Output:     "console",
+        JSONFormat: true,
+    }
+    if err := logger.InitWithConfig(cfg); err != nil {
+        panic("Failed to initialize logger: " + err.Error())
+    }
+    defer logger.Sync()
+
+    logger.Debug("Debugging application",
+        logger.String("component", "server"),
+        logger.Int("port", 8080),
+    )
+}
 ```
 
-## Global Logger
+**Output (JSON)**:
+```json
+{"level":"debug","ts":"2025-05-01T12:00:00.000Z","caller":"main.go:15","msg":"Debugging application","component":"server","port":8080}
+```
 
-For convenience, you can set and use a global logger instance:
+## Configuration
+The `logger` package is configured via the `LoggerConfig` struct:
 
 ```go
-// Set the global logger
-logger.SetLogger(logger.New(config))
-
-// Use global functions
-logger.Info(ctx, "Using global logger")
-logger.Error(ctx, "Something went wrong", logger.Error(err))
-
-// Or get the global logger instance
-log := logger.GetLogger()
-log.Info(ctx, "Another way to use the global logger")
+type LoggerConfig struct {
+    Level      string // Log level: "debug", "info", "warn", "error", "fatal"
+    Output     string // Output destination: "console" or "file"
+    FilePath   string // File path for file output (required if Output="file")
+    JSONFormat bool   // Output format: true for JSON, false for Zap console format
+}
 ```
+
+### Configuration Options
+- **Level**:
+  - `debug`: Logs all messages (debug and above).
+  - `info`: Logs info, warn, error, and fatal messages.
+  - `warn`: Logs warn, error, and fatal messages.
+  - `error`: Logs error and fatal messages.
+  - `fatal`: Logs only fatal messages (exits program).
+  - Default: `info`.
+
+- **Output**:
+  - `console`: Logs to standard output (`os.Stdout`).
+  - `file`: Logs to a specified file (requires `FilePath`).
+  - Default: `console`.
+
+- **FilePath**:
+  - Path to the log file (e.g., `app.log`).
+  - Required if `Output="file"`.
+  - Ensure write permissions (e.g., `chmod 666 app.log`).
+
+- **JSONFormat**:
+  - `true`: Outputs logs in JSON format (e.g., `{"level":"info","msg":"Test"}`).
+  - `false`: Outputs logs in Zap’s console format (e.g., `2025-05-01T12:00:00.000Z INFO Test message {"key": "value"}`).
+  - Default: `true`.
 
 ## Testing
+The package includes comprehensive tests to validate all log levels, field types, output destinations, and formats.
 
-The package includes a mock logger for testing:
+### Running Tests
+Run tests with verbose output to see log output:
 
-```go
-mockLogger := logger.NewMockLogger()
-
-// Use the mock logger in your code
-mockLogger.Info(ctx, "Test message")
-
-// Check what was logged
-logs := mockLogger.GetInfoLogs()
-assert.Len(t, logs, 1)
-assert.Equal(t, "Test message", logs[0].Msg)
+```bash
+go test -v ./logger
 ```
 
-## Switching Logging Libraries
+### Expected Output
+- **JSON Format** (console/file):
+  ```json
+  {"level":"info","ts":"2025-05-01T12:00:00.000Z","caller":"logger_test.go:123","msg":"Test message","string_field":"value","int_field":42,"float_field":3.14,"bool_field":true,"error":"test error","any_field":["x","y"],"trace_id":"...","span_id":"..."}
+  ```
+- **Zap Console Format** (console/file):
+  ```
+  2025-05-01T12:00:00.000Z	info	logger_test.go:123	Test message	{"string_field": "value", "int_field": 42, "float_field": 3.14, "bool_field": true, "error": "test error", "any_field": ["x", "y"], "trace_id": "...", "span_id": "..."}
+  ```
 
-You can easily switch between logging backends:
+Tests cover:
+- All log levels (`debug`, `info`, `warn`, `error`).
+- All field types (`string`, `int`, `float`, `bool`, `error`, `any`).
+- Console and file output.
+- JSON and Zap console formats.
+- OpenTelemetry trace fields.
 
-```go
-// Start with zap
-zapConfig := logger.DefaultConfig()
-zapConfig.Type = logger.ZapLogger
-log := logger.New(zapConfig)
+## Troubleshooting
+### Compilation Errors
+If you encounter compilation errors (e.g., related to `go.uber.org/zap` or `go.opentelemetry.io/otel`):
+- **Verify Dependencies**:
+  ```bash
+  go list -m go.uber.org/zap
+  go list -m go.opentelemetry.io/otel
+  ```
+  Ensure `go.uber.org/zap@v1.26.0` and `go.opentelemetry.io/otel@v1.29.0` are used.
+- **Check Dependency Conflicts**:
+  ```bash
+  go mod graph | grep zap
+  go mod graph | grep opentelemetry
+  ```
+  Look for conflicting versions.
+- **Clear Module Cache**:
+  ```bash
+  go clean -modcache
+  go mod tidy
+  ```
+- **Share Error Output**: Provide the exact error message to diagnose the issue.
 
-// Switch to logrus
-logrusConfig := logger.DefaultConfig()
-logrusConfig.Type = logger.LogrusLogger
-log = logger.New(logrusConfig)
+### Logger Not Initialized
+If you see `logger not initialized` errors:
+- Ensure `logger.Init()` or `logger.InitWithConfig()` is called before logging.
+- Example:
+  ```go
+  if err := logger.Init(); err != nil {
+      panic(err)
+  }
+  ```
+
+### File Output Issues
+If file output fails:
+- Verify the `FilePath` is valid and writable (e.g., `chmod 666 app.log`).
+- Check for errors during initialization:
+  ```go
+  cfg := logger.LoggerConfig{Output: "file", FilePath: "app.log"}
+  if err := logger.InitWithConfig(cfg); err != nil {
+      fmt.Println("Error:", err)
+  }
+  ```
+
+### OpenTelemetry Fields Missing
+If `trace_id` or `span_id` are not included:
+- Ensure the context contains a valid OpenTelemetry span:
+  ```go
+  ctx, span := tracer.Start(context.Background(), "example")
+  logger.InfoContext(ctx, "Message")
+  span.End()
+  ```
+
+## Contributing
+Contributions are welcome! To contribute:
+1. **Fork the Repository**: Create a fork at `github.com/your-org/logger`.
+2. **Create a Branch**: Use a descriptive branch name (e.g., `feature/add-custom-field`).
+3. **Make Changes**: Implement your feature or fix, ensuring tests pass.
+4. **Run Tests**: Verify with `go test -v ./logger`.
+5. **Submit a Pull Request**: Include a clear description of changes and reference any issues.
+
+### Development Setup
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/your-org/logger.git
+cd logger
+go mod tidy
 ```
 
-## Adding Your Own Logging Backend
-
-To add support for another logging library:
-
-1. Create a new file for your implementation
-2. Create a struct that implements the `Logger` interface
-3. Add a new constant to `LoggerType` in `main.go`
-4. Update the `New` function to support your logger type
+### Code Style
+- Follow Go conventions (use `gofmt`, `golint`).
+- Write clear, concise code with comments for complex logic.
+- Ensure tests cover new functionality.
 
 ## License
-
-MIT
-
-## Author
-
-[T-Prohmpossadhorn](https://github.com/T-Prohmpossadhorn)
+This project is licensed under the MIT License. See the `LICENSE` file for details.
