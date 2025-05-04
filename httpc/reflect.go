@@ -7,52 +7,60 @@ import (
 	"github.com/T-Prohmpossadhorn/go-core/logger"
 )
 
-// getServiceInfo retrieves method information from a service
-func getServiceInfo(svc interface{}) ([]MethodInfo, error) {
-	logger.Info("Starting getServiceInfo")
-	defer logger.Info("getServiceInfo completed")
-
-	if svc == nil {
-		logger.Error("Service cannot be nil")
+// getServiceInfo extracts method information from a service
+func getServiceInfo(service interface{}) ([]MethodInfo, error) {
+	if service == nil {
 		return nil, fmt.Errorf("service cannot be nil")
 	}
 
-	svcValue := reflect.ValueOf(svc)
-	svcType := reflect.TypeOf(svc)
+	svcType := reflect.TypeOf(service)
+	svcValue := reflect.ValueOf(service)
 
-	// Handle non-pointer types by converting to pointer
-	if svcType.Kind() != reflect.Ptr {
-		svcValue = reflect.New(svcType).Elem()
-		svcValue.Set(reflect.ValueOf(svc))
-		svcValue = svcValue.Addr()
+	// Check for RegisterMethods method
+	registerMethod, ok := svcType.MethodByName("RegisterMethods")
+	if !ok {
+		return nil, fmt.Errorf("no RegisterMethods method found")
 	}
 
-	registerMethods := svcValue.MethodByName("RegisterMethods")
-	if !registerMethods.IsValid() {
-		logger.Error("No RegisterMethods method found")
-		return nil, fmt.Errorf("service must implement RegisterMethods")
+	// Verify RegisterMethods signature
+	if registerMethod.Type.NumIn() != 1 || registerMethod.Type.NumOut() != 1 ||
+		registerMethod.Type.Out(0) != reflect.TypeOf([]MethodInfo{}) {
+		return nil, fmt.Errorf("invalid RegisterMethods signature")
 	}
 
-	methodsVal := registerMethods.Call(nil)
-	if len(methodsVal) != 1 || methodsVal[0].Type() != reflect.TypeOf([]MethodInfo{}) {
-		logger.Error("Invalid RegisterMethods signature")
-		return nil, fmt.Errorf("RegisterMethods must return []MethodInfo")
+	// Call RegisterMethods
+	results := registerMethod.Func.Call([]reflect.Value{svcValue})
+	if len(results) != 1 {
+		return nil, fmt.Errorf("RegisterMethods returned unexpected results")
 	}
 
-	methods := methodsVal[0].Interface().([]MethodInfo)
-	logger.Info("Retrieved methods", logger.Field{Key: "count", Value: len(methods)})
+	methods, ok := results[0].Interface().([]MethodInfo)
+	if !ok {
+		return nil, fmt.Errorf("RegisterMethods did not return []MethodInfo")
+	}
+
+	// Validate methods
+	for _, method := range methods {
+		if method.Name == "" || method.HTTPMethod == "" {
+			return nil, fmt.Errorf("invalid MethodInfo: Name or HTTPMethod is empty")
+		}
+		// Verify method exists and has correct signature
+		meth, ok := svcType.MethodByName(method.Name)
+		if !ok {
+			return nil, fmt.Errorf("method %s not found", method.Name)
+		}
+		if meth.Type.NumIn() != 2 || meth.Type.NumOut() != 2 ||
+			meth.Type.Out(1) != reflect.TypeOf((*error)(nil)).Elem() {
+			return nil, fmt.Errorf("invalid signature for method %s", method.Name)
+		}
+		// Set Func field
+		method.Func = meth.Func
+	}
+
 	if len(methods) == 0 {
-		logger.Error("No methods defined for service")
 		return nil, fmt.Errorf("no methods defined for service")
 	}
 
-	// Validate MethodInfo fields
-	for _, method := range methods {
-		if method.Name == "" || method.HTTPMethod == "" {
-			logger.Error("Invalid MethodInfo: Name or HTTPMethod is empty")
-			return nil, fmt.Errorf("invalid MethodInfo: Name or HTTPMethod is empty")
-		}
-	}
-
+	logger.Info("Retrieved methods", "count", len(methods))
 	return methods, nil
 }

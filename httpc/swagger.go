@@ -192,6 +192,21 @@ func updateSwaggerDoc(s *Server, service interface{}, prefix string) error {
 						},
 					},
 				},
+				"500": map[string]interface{}{
+					"description": "Internal server error",
+					"content": map[string]interface{}{
+						"application/json": map[string]interface{}{
+							"schema": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"error": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+						},
+					},
+				},
 			},
 			"summary": method.Name,
 		}
@@ -207,7 +222,8 @@ func updateSwaggerDoc(s *Server, service interface{}, prefix string) error {
 					},
 				},
 			}
-		} else if method.HTTPMethod == "POST" {
+		} else {
+			// POST, PUT, DELETE, PATCH, OPTIONS, HEAD
 			schema := generateSchema(method.InputType)
 			operation["requestBody"] = map[string]interface{}{
 				"content": map[string]interface{}{

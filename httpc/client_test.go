@@ -1,19 +1,17 @@
 package httpc
 
 import (
-	"context"
-	"net/http/httptest"
 	"os"
 	"testing"
 
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
-	"github.com/T-Prohmpossadhorn/go-core/otel"
-	"github.com/stretchr/testify/assert"
+	"github.com/go-playground/validator/v10"
+	"github.com/stretchr/testify/require"
 )
 
-func TestClient(t *testing.T) {
-	os.Setenv("CONFIG_LOGGER_LEVEL", "debug")
+func TestHTTPClient(t *testing.T) {
+	os.Setenv("CONFIG_LOGGER_LEVEL", "info")
 	if err := logger.Init(); err != nil {
 		t.Fatalf("Failed to initialize logger: %v", err)
 	}
@@ -22,164 +20,161 @@ func TestClient(t *testing.T) {
 		OtelEnabled: false,
 		Port:        8080,
 	}
-	serverCfgMap, err := toConfigMap(serverCfg)
-	assert.NoError(t, err)
-	serverConfig, err := config.New(config.WithDefault(serverCfgMap))
-	assert.NoError(t, err)
 
-	clientCfg := ClientConfig{
-		OtelEnabled:          false,
-		HTTPClientTimeoutMs:  1000,
-		HTTPClientMaxRetries: 2,
-	}
-	clientCfgMap, err := toConfigMap(clientCfg)
-	assert.NoError(t, err)
-	clientConfig, err := config.New(config.WithDefault(clientCfgMap))
-	assert.NoError(t, err)
-
-	t.Run("Hello Method", func(t *testing.T) {
-		server, err := NewServer(serverConfig)
-		assert.NoError(t, err)
-
+	t.Run("Valid Client Request", func(t *testing.T) {
 		svc := &TestService{}
-		err = server.RegisterService(svc, WithPathPrefix("/v1"))
-		assert.NoError(t, err)
-
-		ts := httptest.NewServer(server.engine)
+		ts := setupServer(t, serverCfg, svc, "/v1")
 		defer ts.Close()
 
-		client, err := NewHTTPClient(clientConfig)
-		assert.NoError(t, err)
+		cfgMap := map[string]interface{}{
+			"otel_enabled":            false,
+			"http_client_timeout_ms":  1000,
+			"http_client_max_retries": 2,
+		}
+		config, err := config.New(config.WithDefault(cfgMap))
+		require.NoError(t, err)
+
+		client, err := NewHTTPClient(config)
+		require.NoError(t, err)
 
 		var result string
 		err = client.Call("GET", ts.URL+"/v1/Hello?name=Test", nil, &result)
-		assert.NoError(t, err)
-		assert.Equal(t, "Hello, Test!", result)
+		require.NoError(t, err)
+		require.Equal(t, "Hello, Test!", result)
 	})
 
-	t.Run("Create Method", func(t *testing.T) {
-		server, err := NewServer(serverConfig)
-		assert.NoError(t, err)
-
+	t.Run("Client POST Request", func(t *testing.T) {
 		svc := &TestService{}
-		err = server.RegisterService(svc, WithPathPrefix("/v1"))
-		assert.NoError(t, err)
-
-		ts := httptest.NewServer(server.engine)
+		ts := setupServer(t, serverCfg, svc, "/v1")
 		defer ts.Close()
 
-		client, err := NewHTTPClient(clientConfig)
-		assert.NoError(t, err)
+		cfgMap := map[string]interface{}{
+			"otel_enabled":            false,
+			"http_client_timeout_ms":  1000,
+			"http_client_max_retries": 2,
+		}
+		config, err := config.New(config.WithDefault(cfgMap))
+		require.NoError(t, err)
+
+		client, err := NewHTTPClient(config)
+		require.NoError(t, err)
 
 		user := User{
-			Name: "TestUser",
-			Address: struct {
-				City string `json:"city" validate:"required"`
-			}{
-				City: "TestCity",
-			},
+			Name:  "TestUser",
+			Email: "test@example.com",
 		}
-		err = server.validate(user)
-		assert.NoError(t, err)
+		validator := validator.New()
+		err = validator.Struct(user)
+		require.NoError(t, err)
 
 		var result string
 		err = client.Call("POST", ts.URL+"/v1/Create", user, &result)
-		assert.NoError(t, err)
-		assert.Equal(t, "Created user TestUser", result)
+		require.NoError(t, err)
+		require.Equal(t, "Created user TestUser", result)
 	})
 
-	t.Run("Invalid User Validation", func(t *testing.T) {
-		server, err := NewServer(serverConfig)
-		assert.NoError(t, err)
+	t.Run("Client Invalid Input", func(t *testing.T) {
+		svc := &TestService{}
+		ts := setupServer(t, serverCfg, svc, "/v1")
+		defer ts.Close()
+
+		cfgMap := map[string]interface{}{
+			"otel_enabled":            false,
+			"http_client_timeout_ms":  1000,
+			"http_client_max_retries": 2,
+		}
+		config, err := config.New(config.WithDefault(cfgMap))
+		require.NoError(t, err)
+
+		client, err := NewHTTPClient(config)
+		require.NoError(t, err)
 
 		user := User{
-			Name: "", // Invalid: Name is required
-			Address: struct {
-				City string `json:"city" validate:"required"`
-			}{
-				City: "TestCity",
-			},
+			Name:  "",        // Invalid: required
+			Email: "invalid", // Invalid: not an email
 		}
-		err = server.validate(user)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "validation failed")
+		var result string
+		err = client.Call("POST", ts.URL+"/v1/Create", user, &result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "request failed with status 400")
 	})
 
-	t.Run("Tracing Enabled", func(t *testing.T) {
-		os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
-		defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
-
-		serverCfg.OtelEnabled = true
-		serverCfgMap, err := toConfigMap(serverCfg)
-		assert.NoError(t, err)
-		serverConfig, err := config.New(config.WithDefault(serverCfgMap))
-		assert.NoError(t, err)
-
-		server, err := NewServer(serverConfig)
-		assert.NoError(t, err)
-
-		svc := &TestService{}
-		err = server.RegisterService(svc, WithPathPrefix("/v1"))
-		assert.NoError(t, err)
-
-		ts := httptest.NewServer(server.engine)
+	t.Run("Client Server Error", func(t *testing.T) {
+		svc := &MultiMethodService{}
+		ts := setupServer(t, serverCfg, svc, "/v1")
 		defer ts.Close()
 
-		clientCfg.OtelEnabled = true
-		clientCfgMap, err := toConfigMap(clientCfg)
-		assert.NoError(t, err)
-		clientConfig, err := config.New(config.WithDefault(clientCfgMap))
-		assert.NoError(t, err)
+		cfgMap := map[string]interface{}{
+			"otel_enabled":            false,
+			"http_client_timeout_ms":  1000,
+			"http_client_max_retries": 2,
+		}
+		config, err := config.New(config.WithDefault(cfgMap))
+		require.NoError(t, err)
 
-		client, err := NewHTTPClient(clientConfig)
-		assert.NoError(t, err)
+		client, err := NewHTTPClient(config)
+		require.NoError(t, err)
 
-		var result string
-		err = client.Call("GET", ts.URL+"/v1/Hello?name=Test", nil, &result)
-		assert.NoError(t, err)
-		assert.Equal(t, "Hello, Test!", result)
+		var output MultiOutput
+		err = client.Call("GET", ts.URL+"/v1/GetMethod?name=error", nil, &output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "request failed with status 500")
+		require.Contains(t, err.Error(), "simulated server error")
 	})
 
-	t.Run("Tracing Enabled Initialized", func(t *testing.T) {
-		os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
-		defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
-
-		serverCfg.OtelEnabled = true
-		serverCfgMap, err := toConfigMap(serverCfg)
-		assert.NoError(t, err)
-		serverConfig, err := config.New(config.WithDefault(serverCfgMap))
-		assert.NoError(t, err)
-
-		err = otel.Init(serverConfig)
-		assert.NoError(t, err)
-		defer otel.Shutdown(context.Background())
-
-		server, err := NewServer(serverConfig)
-		assert.NoError(t, err)
-
-		svc := &TestService{}
-		err = server.RegisterService(svc, WithPathPrefix("/v1"))
-		assert.NoError(t, err)
-
-		ts := httptest.NewServer(server.engine)
+	t.Run("Client Multi-Method Errors", func(t *testing.T) {
+		svc := &MultiMethodService{}
+		ts := setupServer(t, serverCfg, svc, "/v1")
 		defer ts.Close()
 
-		clientCfg.OtelEnabled = true
-		clientCfgMap, err := toConfigMap(clientCfg)
-		assert.NoError(t, err)
-		clientConfig, err := config.New(config.WithDefault(clientCfgMap))
-		assert.NoError(t, err)
+		cfgMap := map[string]interface{}{
+			"otel_enabled":            false,
+			"http_client_timeout_ms":  1000,
+			"http_client_max_retries": 2,
+		}
+		config, err := config.New(config.WithDefault(cfgMap))
+		require.NoError(t, err)
 
-		err = otel.Init(clientConfig)
-		assert.NoError(t, err)
-		defer otel.Shutdown(context.Background())
+		client, err := NewHTTPClient(config)
+		require.NoError(t, err)
 
-		client, err := NewHTTPClient(clientConfig)
-		assert.NoError(t, err)
+		input := MultiInput{Value: "error"}
+		var output MultiOutput
+
+		// Test POST
+		err = client.Call("POST", ts.URL+"/v1/PostMethod", input, &output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "request failed with status 500")
+		require.Contains(t, err.Error(), "simulated server error")
+
+		// Test PUT
+		err = client.Call("PUT", ts.URL+"/v1/PutMethod", input, &output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "request failed with status 500")
+		require.Contains(t, err.Error(), "simulated server error")
+
+		// Test DELETE
+		err = client.Call("DELETE", ts.URL+"/v1/DeleteMethod", input, &output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "request failed with status 500")
+		require.Contains(t, err.Error(), "simulated server error")
+	})
+
+	t.Run("Client Invalid Method", func(t *testing.T) {
+		cfgMap := map[string]interface{}{
+			"otel_enabled":            false,
+			"http_client_timeout_ms":  1000,
+			"http_client_max_retries": 2,
+		}
+		config, err := config.New(config.WithDefault(cfgMap))
+		require.NoError(t, err)
+
+		client, err := NewHTTPClient(config)
+		require.NoError(t, err)
 
 		var result string
-		err = client.Call("GET", ts.URL+"/v1/Hello?name=Test", nil, &result)
-		assert.NoError(t, err)
-		assert.Equal(t, "Hello, Test!", result)
+		err = client.Call("INVALID", "http://example.com", nil, &result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid HTTP method: INVALID")
 	})
 }

@@ -2,34 +2,39 @@ package httpc
 
 import (
 	"reflect"
-
-	"github.com/T-Prohmpossadhorn/go-core/logger"
+	"strings"
 )
 
-// MethodInfo represents metadata for a service method
+// MethodInfo represents a service method's metadata
 type MethodInfo struct {
-	Name        string
-	HTTPMethod  string
-	Description string
-	InputType   reflect.Type
-	OutputType  reflect.Type
+	Name       string
+	HTTPMethod string
+	InputType  reflect.Type
+	OutputType reflect.Type
+	Func       reflect.Value // Stores method function
 }
 
-// Option represents a configuration option for service registration
-type Option func(*Server)
+// ServiceOption configures service registration
+type ServiceOption func(*serviceConfig)
 
-// WithPathPrefix sets the path prefix for service endpoints
-func WithPathPrefix(prefix string) Option {
-	return func(s *Server) {
-		logger.Info("Applying option", logger.Field{Key: "prefix", Value: prefix})
-		s.pathPrefix = prefix
+type serviceConfig struct {
+	prefix string
+}
+
+// WithPathPrefix sets a custom path prefix for endpoints
+func WithPathPrefix(prefix string) ServiceOption {
+	return func(s *serviceConfig) {
+		s.prefix = prefix
 	}
 }
 
-// User represents a user input struct for testing
-type User struct {
-	Name    string `json:"name" validate:"required"`
-	Address struct {
-		City string `json:"city" validate:"required"`
-	} `json:"address"`
+// isValidHTTPMethod checks if the given method is a valid HTTP method
+func isValidHTTPMethod(method string) bool {
+	validMethods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+	for _, valid := range validMethods {
+		if strings.ToUpper(method) == valid {
+			return true
+		}
+	}
+	return false
 }

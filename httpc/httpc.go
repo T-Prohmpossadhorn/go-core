@@ -1,6 +1,7 @@
 package httpc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,368 +13,360 @@ import (
 
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
-	"github.com/T-Prohmpossadhorn/go-core/otel"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/google/uuid"
 )
 
-// ServerConfig defines the configuration for the server
 type ServerConfig struct {
 	OtelEnabled bool `json:"otel_enabled" default:"false"`
 	Port        int  `json:"port" default:"8080" required:"true" validate:"gt=0,lte=65535"`
 }
 
-// ClientConfig defines the configuration for the HTTP client
 type ClientConfig struct {
-	OtelEnabled          bool `json:"otel_enabled" default:"false"`
-	HTTPClientTimeoutMs  int  `json:"http_client_timeout_ms" default:"1000" required:"true" validate:"gt=0"`
-	HTTPClientMaxRetries int  `json:"http_client_max_retries" default:"2" validate:"gte=-1"`
+	OtelEnabled    bool  `json:"otel_enabled" default:"false"`
+	TimeoutMs      int   `json:"http_client_timeout_ms" default:"3000" required:"true" validate:"gte=100,lte=30000"`
+	MaxRetries     int   `json:"http_client_max_retries" default:"3" required:"true" validate:"gte=0,lte=5"`
+	BackoffBaseMs  int64 `json:"http_client_backoff_base_ms" default:"100" validate:"gte=50,lte=1000"`
+	BackoffMaxMs   int64 `json:"http_client_backoff_max_ms" default:"1000" validate:"gte=100,lte=5000"`
+	BackoffFactor  int   `json:"http_client_backoff_factor" default:"2" validate:"gte=1,lte=5"`
+	DisableBackoff bool  `json:"http_client_disable_backoff" default:"false"`
 }
 
-// toConfigMap converts a struct to a map for config.WithDefault
-func toConfigMap(v interface{}) (map[string]interface{}, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal config: %w", err)
-	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-	return m, nil
-}
-
-// validateConfig validates the config struct
-func validateConfig(v interface{}) error {
-	validate := validator.New()
-	if err := validate.Struct(v); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-	return nil
-}
-
-// Server represents the HTTP server
 type Server struct {
-	engine     *gin.Engine
-	config     *config.Config
-	pathPrefix string
-	swagger    map[string]interface{}
+	engine      *gin.Engine
+	swagger     map[string]interface{}
+	otelEnabled bool
+	config      *config.Config
+	server      *http.Server
 }
 
-// HTTPClient represents the HTTP client
 type HTTPClient struct {
-	client *http.Client
-	config *config.Config
+	client      *http.Client
+	config      ClientConfig
+	otelEnabled bool
 }
 
-// NewServer creates a new server with the given configuration
-func NewServer(cfg *config.Config) (*Server, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("config cannot be nil")
-	}
+func NewServer(c *config.Config) (*Server, error) {
 	logger.Info("Creating new server")
+	gin.SetMode(gin.DebugMode)
+	engine := gin.New()
+	engine.Use(gin.Recovery())
 
-	port := 8080
-	if val := cfg.Get("port"); val != nil {
-		if p, ok := val.(float64); ok {
-			port = int(p)
-		}
+	swaggerDoc := map[string]interface{}{
+		"openapi": "3.0.3",
+		"info": map[string]interface{}{
+			"title":   "httpc API",
+			"version": "1.0.0",
+		},
+		"paths": map[string]interface{}{},
 	}
-	if port <= 0 {
-		return nil, fmt.Errorf("port must be greater than 0")
-	}
-
-	engine := gin.Default()
 	server := &Server{
-		engine:     engine,
-		config:     cfg,
-		pathPrefix: "",
-		swagger:    map[string]interface{}{"paths": map[string]interface{}{}},
+		engine:      engine,
+		swagger:     swaggerDoc,
+		otelEnabled: c.GetBool("otel_enabled"),
+		config:      c,
 	}
+
 	engine.GET("/health", func(c *gin.Context) {
-		c.Status(http.StatusOK)
+		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 	})
 	engine.GET("/api/docs/swagger.json", func(c *gin.Context) {
 		c.JSON(http.StatusOK, server.swagger)
 	})
+
 	logger.Info("Registering health and Swagger endpoints")
 	return server, nil
 }
 
-// ListenAndServe starts the HTTP server on the configured port
 func (s *Server) ListenAndServe() error {
-	if s == nil {
-		return fmt.Errorf("server cannot be nil")
-	}
-	port := 8080
-	if val := s.config.Get("port"); val != nil {
-		if p, ok := val.(float64); ok {
-			port = int(p)
-		}
-	}
+	port := s.config.Get("port").(int)
 	addr := fmt.Sprintf(":%d", port)
-	logger.Info("Starting server", logger.Field{Key: "address", Value: addr})
-	return s.engine.Run(addr)
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: s.engine,
+	}
+
+	logger.Info("Starting server", logger.String("address", addr))
+	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("server failed to start: %w", err)
+	}
+	return nil
 }
 
-// NewHTTPClient creates a new HTTP client with the given configuration
-func NewHTTPClient(cfg *config.Config) (*HTTPClient, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("config cannot be nil")
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.server == nil {
+		return nil
 	}
+	logger.Info("Shutting down server")
+	return s.server.Shutdown(ctx)
+}
+
+func (s *Server) RegisterService(svc interface{}, opts ...ServiceOption) error {
+	logger.Info("Starting RegisterService")
+	cfg := &serviceConfig{prefix: "/"}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	logger.Info("Service type", logger.String("type", fmt.Sprintf("%T", svc)))
+	// Use reflection for all services, as getServiceInfo handles RegisterMethods
+	var methods []MethodInfo
+	info, err := getServiceInfo(svc)
+	if err != nil {
+		return fmt.Errorf("failed to get service info: %w", err)
+	}
+	methods = info
+	logger.Info("Retrieved methods")
+	return s.registerMethods(methods, cfg, svc)
+}
+
+func (s *Server) registerMethods(methods []MethodInfo, cfg *serviceConfig, svc interface{}) error {
+	for _, m := range methods {
+		path := fmt.Sprintf("%s/%s", cfg.prefix, m.Name)
+		switch strings.ToUpper(m.HTTPMethod) {
+		case http.MethodGet:
+			s.engine.GET(path, s.handleMethod(m))
+		case http.MethodPost, http.MethodPut, http.MethodDelete:
+			s.engine.Handle(m.HTTPMethod, path, s.handleMethod(m))
+		default:
+			logger.Warn("Skipping invalid HTTP method", logger.String("method", m.HTTPMethod))
+			continue
+		}
+		logger.Info("Registered endpoint", logger.String("method", m.HTTPMethod), logger.String("path", path))
+	}
+
+	if len(methods) > 0 {
+		if err := updateSwaggerDoc(s, svc, cfg.prefix); err != nil {
+			logger.Error("Failed to update Swagger doc", logger.ErrField(err))
+		}
+	}
+
+	logger.Info("Registering endpoints with prefix", logger.String("prefix", cfg.prefix))
+	logger.Info("Service registered successfully")
+	return nil
+}
+
+func (s *Server) handleMethod(m MethodInfo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Placeholder: no-op for tracing
+		ctx := c.Request.Context()
+		var span interface{} // Placeholder
+		defer func() {
+			if span != nil {
+				// No-op
+			}
+		}()
+
+		reqCtx := ctx
+		var inputVal interface{}
+		inputType := m.InputType
+		if inputType.Kind() == reflect.String {
+			// For string inputs, use query parameter directly
+			if m.HTTPMethod == http.MethodGet {
+				query := c.Query("name")
+				inputVal = query
+			} else {
+				inputVal = reflect.New(inputType).Interface()
+				if err := c.ShouldBindJSON(inputVal); err != nil {
+					logger.ErrorContext(reqCtx, "JSON binding failed", logger.ErrField(err))
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+			}
+		} else {
+			// For struct inputs, bind and validate
+			inputVal = reflect.New(inputType).Interface()
+			if m.HTTPMethod == http.MethodGet {
+				if err := c.ShouldBindQuery(inputVal); err != nil {
+					logger.ErrorContext(reqCtx, "Query binding failed", logger.ErrField(err))
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+			} else {
+				if err := c.ShouldBindJSON(inputVal); err != nil {
+					logger.ErrorContext(reqCtx, "JSON binding failed", logger.ErrField(err))
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+			}
+			validate := validator.New()
+			if err := validate.Struct(inputVal); err != nil {
+				logger.ErrorContext(reqCtx, "Validation failed", logger.ErrField(err))
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("validation failed: %s", err.Error())})
+				return
+			}
+		}
+
+		// Prepare input for method call
+		var callInput reflect.Value
+		if inputType.Kind() == reflect.String {
+			callInput = reflect.ValueOf(inputVal)
+		} else {
+			callInput = reflect.ValueOf(inputVal).Elem()
+		}
+
+		// Call the method without context
+		results := m.Func.Call([]reflect.Value{callInput})
+		if !results[1].IsNil() {
+			err := results[1].Interface().(error)
+			logger.ErrorContext(reqCtx, "Method execution failed", logger.ErrField(err))
+			logger.InfoContext(reqCtx, "Sending error response", logger.String("body", fmt.Sprintf(`{"error":"%s"}`, err.Error())))
+			c.Data(http.StatusInternalServerError, "application/json", []byte(`{"error":"`+err.Error()+`"}`))
+			logger.InfoContext(reqCtx, "After Data write", logger.Int("status", c.Writer.Status()), logger.Any("headers", c.Writer.Header()))
+			return
+		}
+
+		c.JSON(http.StatusOK, results[0].Interface())
+	}
+}
+
+func getIntConfig(c *config.Config, key string, defaultValue int) int {
+	if val := c.Get(key); val != nil {
+		if intVal, ok := val.(int); ok {
+			return intVal
+		}
+	}
+	return defaultValue
+}
+
+func getBoolConfig(c *config.Config, key string, defaultValue bool) bool {
+	if val := c.Get(key); val != nil {
+		if boolVal, ok := val.(bool); ok {
+			return boolVal
+		}
+	}
+	return defaultValue
+}
+
+func NewHTTPClient(c *config.Config) (*HTTPClient, error) {
 	logger.Info("Creating new HTTP client")
-
-	timeoutMs := 1000
-	if val := cfg.Get("http_client_timeout_ms"); val != nil {
-		if ms, ok := val.(float64); ok {
-			timeoutMs = int(ms)
-		}
-	}
-	if timeoutMs <= 0 {
-		return nil, fmt.Errorf("http_client_timeout_ms must be greater than 0")
-	}
-	maxRetries := 2
-	if val := cfg.Get("http_client_max_retries"); val != nil {
-		if retries, ok := val.(float64); ok {
-			maxRetries = int(retries)
-		}
+	cfg := ClientConfig{
+		OtelEnabled:    getBoolConfig(c, "otel_enabled", false),
+		TimeoutMs:      getIntConfig(c, "http_client_timeout_ms", 3000),
+		MaxRetries:     getIntConfig(c, "http_client_max_retries", 3),
+		BackoffBaseMs:  int64(getIntConfig(c, "http_client_backoff_base_ms", 100)),
+		BackoffMaxMs:   int64(getIntConfig(c, "http_client_backoff_max_ms", 1000)),
+		BackoffFactor:  getIntConfig(c, "http_client_backoff_factor", 2),
+		DisableBackoff: getBoolConfig(c, "http_client_disable_backoff", false),
 	}
 
-	logger.Info("Using HTTP client timeout", logger.Field{Key: "timeout_ms", Value: timeoutMs})
-	logger.Info("Using HTTP max retries", logger.Field{Key: "max_retries", Value: maxRetries})
+	validate := validator.New()
+	if err := validate.Struct(cfg); err != nil {
+		return nil, fmt.Errorf("invalid client config: %w", err)
+	}
+
+	logger.Info("Using HTTP client timeout", logger.Int("timeout_ms", cfg.TimeoutMs))
+	logger.Info("Using HTTP max retries", logger.Int("max_retries", cfg.MaxRetries))
 
 	client := &http.Client{
-		Timeout: time.Duration(timeoutMs) * time.Millisecond,
+		Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond,
 	}
-
 	return &HTTPClient{
-		client: client,
-		config: cfg,
+		client:      client,
+		config:      cfg,
+		otelEnabled: cfg.OtelEnabled,
 	}, nil
 }
 
-// validate validates the input struct
-func (s *Server) validate(input interface{}) error {
-	validate := validator.New()
-	if err := validate.Struct(input); err != nil {
-		logger.Error("Validation failed", logger.Field{Key: "error", Value: err.Error()})
-		return fmt.Errorf("validation failed: %w", err)
-	}
-	return nil
-}
-
-// RegisterService registers a service with the server
-func (s *Server) RegisterService(service interface{}, opts ...Option) error {
+func (h *HTTPClient) Call(method, url string, input, output interface{}) error {
+	// Placeholder: no-op for tracing
 	ctx := context.Background()
-	otelEnabled := s.config.GetBool("otel_enabled")
-	if otelEnabled {
-		tracer := otel.GetTracer("httpc-server")
-		var span trace.Span
-		ctx, span = tracer.Start(ctx, "RegisterService")
-		defer span.End()
-	}
-
-	logger.InfoContext(ctx, "Starting RegisterService")
-	for _, opt := range opts {
-		opt(s)
-	}
-	logger.InfoContext(ctx, "Service type", logger.Field{Key: "type", Value: reflect.TypeOf(service).String()})
-
-	// Update Swagger documentation
-	if err := updateSwaggerDoc(s, service, s.pathPrefix); err != nil {
-		logger.ErrorContext(ctx, "Failed to update Swagger doc", logger.ErrField(err))
-		return err
-	}
-
-	// Register service methods with Gin router
-	svcValue := reflect.ValueOf(service)
-	svcType := reflect.TypeOf(service)
-	registerMethods := svcValue.MethodByName("RegisterMethods")
-	if !registerMethods.IsValid() {
-		err := fmt.Errorf("service must implement RegisterMethods")
-		logger.ErrorContext(ctx, "Service registration failed", logger.ErrField(err))
-		return err
-	}
-
-	methodsVal := registerMethods.Call(nil)
-	if len(methodsVal) != 1 || methodsVal[0].Type() != reflect.TypeOf([]MethodInfo{}) {
-		err := fmt.Errorf("RegisterMethods must return []MethodInfo")
-		logger.ErrorContext(ctx, "Service registration failed", logger.ErrField(err))
-		return err
-	}
-
-	methods := methodsVal[0].Interface().([]MethodInfo)
-	for _, method := range methods {
-		if !isValidHTTPMethod(method.HTTPMethod) {
-			logger.WarnContext(ctx, "Skipping invalid method", logger.Field{Key: "method", Value: method.Name})
-			continue
+	var span interface{} // Placeholder
+	defer func() {
+		if span != nil {
+			// No-op
 		}
+	}()
 
-		// Find the service method
-		svcMethod, exists := svcType.MethodByName(method.Name)
-		if !exists {
-			err := fmt.Errorf("method %s not found in service", method.Name)
-			logger.ErrorContext(ctx, "Service registration failed", logger.ErrField(err))
-			return err
-		}
-
-		// Validate method signature
-		mt := svcMethod.Type
-		if mt.NumIn() != 2 || mt.NumOut() != 2 || mt.Out(1) != reflect.TypeOf((*error)(nil)).Elem() {
-			err := fmt.Errorf("invalid signature for method %s", method.Name)
-			logger.ErrorContext(ctx, "Service registration failed", logger.ErrField(err))
-			return err
-		}
-
-		// Register endpoint with Gin
-		path := fmt.Sprintf("%s/%s", strings.TrimSuffix(s.pathPrefix, "/"), method.Name)
-		switch strings.ToUpper(method.HTTPMethod) {
-		case "GET":
-			s.engine.GET(path, func(c *gin.Context) {
-				reqCtx := c.Request.Context()
-				if otelEnabled {
-					tracer := otel.GetTracer("httpc-server")
-					var span trace.Span
-					reqCtx, span = tracer.Start(reqCtx, "HandleGET:"+method.Name)
-					defer span.End()
-				}
-				name := c.Query("name")
-				results := svcValue.MethodByName(method.Name).Call([]reflect.Value{reflect.ValueOf(name)})
-				if !results[1].IsNil() {
-					logger.ErrorContext(reqCtx, "Method execution failed", logger.ErrField(results[1].Interface().(error)))
-					c.JSON(http.StatusInternalServerError, gin.H{"error": results[1].Interface().(error).Error()})
-					return
-				}
-				c.JSON(http.StatusOK, results[0].Interface())
-			})
-		case "POST":
-			s.engine.POST(path, func(c *gin.Context) {
-				reqCtx := c.Request.Context()
-				if otelEnabled {
-					tracer := otel.GetTracer("httpc-server")
-					var span trace.Span
-					reqCtx, span = tracer.Start(reqCtx, "HandlePOST:"+method.Name)
-					defer span.End()
-				}
-				var input interface{}
-				if method.InputType != nil {
-					input = reflect.New(method.InputType).Interface()
-					if err := c.ShouldBindJSON(input); err != nil {
-						logger.ErrorContext(reqCtx, "Invalid request body", logger.ErrField(err))
-						c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-						return
-					}
-					if err := validator.New().Struct(input); err != nil {
-						logger.ErrorContext(reqCtx, "Validation failed", logger.ErrField(err))
-						c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("validation failed: %v", err)})
-						return
-					}
-				}
-				results := svcValue.MethodByName(method.Name).Call([]reflect.Value{reflect.ValueOf(input).Elem()})
-				if !results[1].IsNil() {
-					logger.ErrorContext(reqCtx, "Method execution failed", logger.ErrField(results[1].Interface().(error)))
-					c.JSON(http.StatusInternalServerError, gin.H{"error": results[1].Interface().(error).Error()})
-					return
-				}
-				c.JSON(http.StatusOK, results[0].Interface())
-			})
-		default:
-			logger.WarnContext(ctx, "Unsupported HTTP method", logger.Field{Key: "method", Value: method.HTTPMethod})
-			continue
-		}
-		logger.InfoContext(ctx, "Registered endpoint", logger.Field{Key: "method", Value: method.HTTPMethod}, logger.Field{Key: "path", Value: path})
-	}
-
-	logger.InfoContext(ctx, "Registering endpoints with prefix", logger.Field{Key: "prefix", Value: s.pathPrefix})
-	logger.InfoContext(ctx, "Service registered successfully")
-	return nil
-}
-
-// Call makes an HTTP request with the given method, URL, input, and output
-func (c *HTTPClient) Call(method, url string, input, output interface{}) error {
-	ctx := context.Background()
-	otelEnabled := c.config.GetBool("otel_enabled")
-	if otelEnabled {
-		tracer := otel.GetTracer("httpc-client")
-		var span trace.Span
-		ctx, span = tracer.Start(ctx, "HTTPClient.Call")
-		defer span.End()
-	}
-
-	logger.InfoContext(ctx, "Sending request", logger.Field{Key: "method", Value: method}, logger.Field{Key: "url", Value: url})
-
+	reqCtx := ctx
+	method = strings.ToUpper(method)
 	if !isValidHTTPMethod(method) {
 		err := fmt.Errorf("invalid HTTP method: %s", method)
-		logger.ErrorContext(ctx, "Invalid HTTP method", logger.ErrField(err))
+		logger.ErrorContext(reqCtx, "Invalid HTTP method", logger.ErrField(err))
 		return err
 	}
 
-	var body io.Reader
+	var bodyData []byte
+	var err error
 	if input != nil {
-		data, err := json.Marshal(input)
+		bodyData, err = json.Marshal(input)
 		if err != nil {
-			logger.ErrorContext(ctx, "Failed to marshal JSON input", logger.ErrField(err))
-			return fmt.Errorf("failed to marshal JSON input: %w", err)
+			return fmt.Errorf("failed to marshal input: %w", err)
 		}
-		body = strings.NewReader(string(data))
-		logger.InfoContext(ctx, "Request body", logger.Field{Key: "length", Value: len(data)})
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		logger.ErrorContext(ctx, "Failed to create request", logger.ErrField(err))
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	if input != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	for attempt := 1; attempt <= h.config.MaxRetries+1; attempt++ {
+		var body io.Reader
+		if bodyData != nil {
+			body = bytes.NewReader(bodyData) // Fresh reader for each attempt
+			logger.InfoContext(reqCtx, "Request body", logger.Int("length", len(bodyData)), logger.Int("attempt", attempt))
+		}
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		logger.ErrorContext(ctx, "Request failed", logger.ErrField(err))
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, method, url, body)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
 
-	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		errorMsg := "unknown error"
-		if bodyBytes != nil {
-			var errResp map[string]interface{}
-			if err := json.Unmarshal(bodyBytes, &errResp); err == nil {
-				if msg, ok := errResp["error"].(string); ok {
-					errorMsg = msg
+		if bodyData != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("X-Request-ID", uuid.New().String())
+
+		logger.InfoContext(reqCtx, "Sending request", logger.String("method", method), logger.String("url", url), logger.Int("attempt", attempt))
+
+		resp, err := h.client.Do(req)
+		if err != nil {
+			logger.ErrorContext(reqCtx, "Request attempt failed", logger.Int("attempt", attempt), logger.ErrField(err))
+			if attempt == h.config.MaxRetries+1 {
+				return fmt.Errorf("request failed: %w", err)
+			}
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if output != nil {
+				bodyBytes, err := io.ReadAll(resp.Body)
+				if err != nil {
+					logger.ErrorContext(reqCtx, "Failed to read response body", logger.ErrField(err))
+					return fmt.Errorf("failed to read response body: %w", err)
+				}
+				if err := json.Unmarshal(bodyBytes, output); err != nil {
+					return fmt.Errorf("failed to unmarshal response: %w", err)
 				}
 			}
+			logger.InfoContext(reqCtx, "Request completed successfully")
+			return nil
 		}
-		logger.ErrorContext(ctx, "Request failed with status", logger.Field{Key: "status", Value: resp.StatusCode}, logger.Field{Key: "error", Value: errorMsg})
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errorMsg)
-	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.ErrorContext(ctx, "Failed to read response body", logger.ErrField(err))
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if err := json.Unmarshal(bodyBytes, output); err != nil {
-		logger.ErrorContext(ctx, "Failed to parse response JSON", logger.ErrField(err))
-		return fmt.Errorf("failed to parse response JSON: %w", err)
-	}
-
-	logger.InfoContext(ctx, "Request completed successfully")
-	return nil
-}
-
-// isValidHTTPMethod checks if the HTTP method is valid
-func isValidHTTPMethod(method string) bool {
-	validMethods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
-	for _, m := range validMethods {
-		if strings.EqualFold(method, m) {
-			return true
+		if resp.StatusCode < 500 || attempt == h.config.MaxRetries+1 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			logger.InfoContext(reqCtx, "Error response body", logger.String("body", string(bodyBytes)))
+			logger.InfoContext(reqCtx, "Response headers", logger.Any("headers", resp.Header))
+			var errResp map[string]string
+			if len(bodyBytes) > 0 {
+				if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp["error"] != "" {
+					logger.ErrorContext(reqCtx, "Request failed with status", logger.Int("status", resp.StatusCode), logger.String("error", errResp["error"]))
+					return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp["error"])
+				}
+			}
+			logger.ErrorContext(reqCtx, "Request failed with status", logger.Int("status", resp.StatusCode), logger.String("error", "unknown error"))
+			return fmt.Errorf("request failed with status %d: unknown error", resp.StatusCode)
 		}
+
+		logger.ErrorContext(reqCtx, "Request attempt failed with status", logger.Int("attempt", attempt), logger.Int("status", resp.StatusCode))
+
+		if h.config.DisableBackoff {
+			continue
+		}
+
+		backoff := h.config.BackoffBaseMs * int64(1<<uint(attempt-1))
+		if backoff > h.config.BackoffMaxMs {
+			backoff = h.config.BackoffMaxMs
+		}
+		time.Sleep(time.Duration(backoff) * time.Millisecond)
 	}
-	logger.Warn("Skipping invalid HTTP method", logger.Field{Key: "method", Value: method})
-	return false
+
+	return fmt.Errorf("all retry attempts failed")
 }
