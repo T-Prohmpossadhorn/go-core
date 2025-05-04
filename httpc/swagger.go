@@ -4,87 +4,200 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-
-	"github.com/T-Prohmpossadhorn/go-core/logger"
 )
 
-// updateSwaggerDoc updates the server's Swagger documentation with service methods
-func updateSwaggerDoc(s *Server, service interface{}, pathPrefix string) error {
-	if s == nil {
-		logger.Error("Server cannot be nil")
-		return fmt.Errorf("server cannot be nil")
+// generateSchema generates a Swagger schema for a given type
+func generateSchema(t reflect.Type) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
 	}
 
-	logger.Info("Starting updateSwaggerDoc")
-
-	svcValue := reflect.ValueOf(service)
-	svcType := reflect.TypeOf(service)
-
-	// Check for RegisterMethods
-	registerMethods := svcValue.MethodByName("RegisterMethods")
-	if !registerMethods.IsValid() {
-		logger.Error("No RegisterMethods method found")
-		return fmt.Errorf("service must implement RegisterMethods")
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
 	}
 
-	// Call RegisterMethods
-	results := registerMethods.Call(nil)
-	if len(results) != 1 || results[0].Type() != reflect.TypeOf([]MethodInfo{}) {
-		logger.Error("Invalid RegisterMethods signature")
-		return fmt.Errorf("invalid RegisterMethods signature")
+	if t.Kind() != reflect.Struct {
+		return map[string]interface{}{
+			"type": t.Kind().String(),
+		}
 	}
 
-	methods := results[0].Interface().([]MethodInfo)
-	if len(methods) == 0 {
-		logger.Error("No methods defined for service")
-		return fmt.Errorf("no methods defined for service")
-	}
+	properties := schema["properties"].(map[string]interface{})
+	var required []string
 
-	// Initialize paths if nil
-	if s.swagger["paths"] == nil {
-		s.swagger["paths"] = make(map[string]interface{})
-	}
-	paths := s.swagger["paths"].(map[string]interface{})
-
-	// Add each method to Swagger paths
-	for _, method := range methods {
-		path := fmt.Sprintf("%s/%s", strings.TrimSuffix(pathPrefix, "/"), method.Name)
-		if !isValidHTTPMethod(method.HTTPMethod) {
-			logger.Warn("Skipping invalid HTTP method", logger.Field{Key: "method", Value: method.HTTPMethod})
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "" || jsonTag == "-" {
 			continue
 		}
 
-		// Find the service method
-		_, exists := svcType.MethodByName(method.Name)
-		if !exists {
-			logger.Error("Method not found", logger.Field{Key: "method", Value: method.Name})
-			return fmt.Errorf("method %s not found in service", method.Name)
+		jsonName := strings.Split(jsonTag, ",")[0]
+		validateTag := field.Tag.Get("validate")
+		fieldSchema := map[string]interface{}{}
+
+		switch field.Type.Kind() {
+		case reflect.String:
+			fieldSchema["type"] = "string"
+			if strings.Contains(validateTag, "min=") {
+				for _, part := range strings.Split(validateTag, ",") {
+					if strings.HasPrefix(part, "min=") {
+						if min, err := parseInt(strings.TrimPrefix(part, "min=")); err == nil {
+							fieldSchema["minLength"] = float64(min)
+						}
+					}
+				}
+			}
+			if strings.Contains(validateTag, "max=") {
+				for _, part := range strings.Split(validateTag, ",") {
+					if strings.HasPrefix(part, "max=") {
+						if max, err := parseInt(strings.TrimPrefix(part, "max=")); err == nil {
+							fieldSchema["maxLength"] = float64(max)
+						}
+					}
+				}
+			}
+			if strings.Contains(validateTag, "email") {
+				fieldSchema["format"] = "email"
+			}
+		case reflect.Int, reflect.Int32, reflect.Int64:
+			fieldSchema["type"] = "integer"
+			if strings.Contains(validateTag, "gte=") {
+				for _, part := range strings.Split(validateTag, ",") {
+					if strings.HasPrefix(part, "gte=") {
+						if min, err := parseInt(strings.TrimPrefix(part, "gte=")); err == nil {
+							fieldSchema["minimum"] = float64(min)
+						}
+					}
+				}
+			}
+			if strings.Contains(validateTag, "lte=") {
+				for _, part := range strings.Split(validateTag, ",") {
+					if strings.HasPrefix(part, "lte=") {
+						if max, err := parseInt(strings.TrimPrefix(part, "lte=")); err == nil {
+							fieldSchema["maximum"] = float64(max)
+						}
+					}
+				}
+			}
+		case reflect.Float32, reflect.Float64:
+			fieldSchema["type"] = "number"
+			if strings.Contains(validateTag, "gte=") {
+				for _, part := range strings.Split(validateTag, ",") {
+					if strings.HasPrefix(part, "gte=") {
+						if min, err := parseFloat(strings.TrimPrefix(part, "gte=")); err == nil {
+							fieldSchema["minimum"] = min
+						}
+					}
+				}
+			}
+		case reflect.Struct:
+			fieldSchema = generateSchema(field.Type)
 		}
 
-		// Create path entry
-		pathEntry := map[string]interface{}{
-			strings.ToLower(method.HTTPMethod): map[string]interface{}{
-				"summary":     method.Description,
-				"operationId": method.Name,
-				"responses": map[string]interface{}{
-					"200": map[string]interface{}{
-						"description": "Successful response",
-						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
-								"schema": map[string]interface{}{
-									"type": "string",
+		if strings.Contains(validateTag, "required") {
+			required = append(required, jsonName)
+		}
+
+		properties[jsonName] = fieldSchema
+	}
+
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+
+	return schema
+}
+
+// parseInt is a helper function to parse string to int
+func parseInt(s string) (int, error) {
+	var result int
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
+}
+
+// parseFloat is a helper function to parse string to float64
+func parseFloat(s string) (float64, error) {
+	var result float64
+	_, err := fmt.Sscanf(s, "%f", &result)
+	return result, err
+}
+
+// updateSwaggerDoc updates the Swagger documentation for the given service
+func updateSwaggerDoc(s *Server, service interface{}, prefix string) error {
+	if s == nil {
+		return fmt.Errorf("server cannot be nil")
+	}
+
+	// Initialize swagger if not already set or missing required fields
+	if s.swagger == nil || s.swagger["openapi"] == nil || s.swagger["info"] == nil {
+		s.swagger = map[string]interface{}{
+			"openapi": "3.0.3",
+			"info": map[string]interface{}{
+				"title":   "httpc API",
+				"version": "1.0.0",
+			},
+			"paths": map[string]interface{}{},
+		}
+	}
+
+	info, err := getServiceInfo(service)
+	if err != nil {
+		return err
+	}
+
+	paths := s.swagger["paths"].(map[string]interface{})
+	for _, method := range info {
+		// Skip invalid HTTP methods
+		if !isValidHTTPMethod(method.HTTPMethod) {
+			continue
+		}
+
+		path := prefix + "/" + method.Name
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+
+		pathItem := map[string]interface{}{}
+		if existing, ok := paths[path]; ok {
+			pathItem = existing.(map[string]interface{})
+		}
+
+		operation := map[string]interface{}{
+			"operationId": method.Name,
+			"responses": map[string]interface{}{
+				"200": map[string]interface{}{
+					"description": "Successful response",
+					"content": map[string]interface{}{
+						"application/json": map[string]interface{}{
+							"schema": map[string]interface{}{
+								"type": method.OutputType.Kind().String(),
+							},
+						},
+					},
+				},
+				"400": map[string]interface{}{
+					"description": "Bad request",
+					"content": map[string]interface{}{
+						"application/json": map[string]interface{}{
+							"schema": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"error": map[string]interface{}{
+										"type": "string",
+									},
 								},
 							},
 						},
 					},
 				},
 			},
+			"summary": method.Name,
 		}
 
-		// Add parameters for GET methods
-		if strings.ToUpper(method.HTTPMethod) == "GET" {
-			getMethod := pathEntry["get"].(map[string]interface{})
-			getMethod["parameters"] = []map[string]interface{}{
+		if method.HTTPMethod == "GET" {
+			operation["parameters"] = []map[string]interface{}{
 				{
 					"name":     "name",
 					"in":       "query",
@@ -94,42 +207,21 @@ func updateSwaggerDoc(s *Server, service interface{}, pathPrefix string) error {
 					},
 				},
 			}
-		}
-
-		// Add request body for POST methods
-		if strings.ToUpper(method.HTTPMethod) == "POST" {
-			postMethod := pathEntry["post"].(map[string]interface{})
-			postMethod["requestBody"] = map[string]interface{}{
-				"required": true,
+		} else if method.HTTPMethod == "POST" {
+			schema := generateSchema(method.InputType)
+			operation["requestBody"] = map[string]interface{}{
 				"content": map[string]interface{}{
 					"application/json": map[string]interface{}{
-						"schema": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"name": map[string]interface{}{
-									"type": "string",
-								},
-								"address": map[string]interface{}{
-									"type": "object",
-									"properties": map[string]interface{}{
-										"city": map[string]interface{}{
-											"type": "string",
-										},
-									},
-									"required": []string{"city"},
-								},
-							},
-							"required": []string{"name"},
-						},
+						"schema": schema,
 					},
 				},
+				"required": true,
 			}
 		}
 
-		paths[path] = pathEntry
+		pathItem[strings.ToLower(method.HTTPMethod)] = operation
+		paths[path] = pathItem
 	}
 
-	logger.Info("Added methods to Swagger doc", logger.Field{Key: "count", Value: len(methods)})
-	logger.Info("Swagger doc updated successfully")
 	return nil
 }

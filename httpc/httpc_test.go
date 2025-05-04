@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -52,6 +53,59 @@ func setupServer(t *testing.T, cfg ServerConfig, svc interface{}, prefix string)
 	return server, ts
 }
 
+// ProductService for testing
+type Product struct {
+	ID    int     `json:"id" validate:"required,gte=1"`
+	Name  string  `json:"name" validate:"required,min=1,max=100"`
+	Price float64 `json:"price" validate:"gte=0"`
+}
+
+type ProductService struct{}
+
+func (s *ProductService) Create(product Product) (string, error) {
+	return fmt.Sprintf("Created product %s", product.Name), nil
+}
+
+func (s *ProductService) RegisterMethods() []MethodInfo {
+	return []MethodInfo{
+		{
+			Name:       "Create",
+			HTTPMethod: "POST",
+			InputType:  reflect.TypeOf(Product{}),
+			OutputType: reflect.TypeOf(""),
+		},
+	}
+}
+
+// CustomerService for testing
+type Address struct {
+	Street string `json:"street" validate:"required,min=1,max=200"`
+	City   string `json:"city" validate:"required,min=1,max=100"`
+}
+
+type Customer struct {
+	Email   string  `json:"email" validate:"required,email"`
+	Age     int     `json:"age" validate:"gte=18,lte=120"`
+	Address Address `json:"address" validate:"required"`
+}
+
+type CustomerService struct{}
+
+func (s *CustomerService) Create(customer Customer) (string, error) {
+	return fmt.Sprintf("Created customer %s", customer.Email), nil
+}
+
+func (s *CustomerService) RegisterMethods() []MethodInfo {
+	return []MethodInfo{
+		{
+			Name:       "Create",
+			HTTPMethod: "POST",
+			InputType:  reflect.TypeOf(Customer{}),
+			OutputType: reflect.TypeOf(""),
+		},
+	}
+}
+
 func TestHTTPC(t *testing.T) {
 	os.Setenv("CONFIG_LOGGER_LEVEL", "info")
 	if err := logger.Init(); err != nil {
@@ -81,13 +135,148 @@ func TestHTTPC(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var doc map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&doc)
+		// Read raw response for debugging
+		body, err := io.ReadAll(resp.Body)
 		assert.NoError(t, err)
+		t.Logf("Swagger JSON response: %s", string(body))
 
+		var doc map[string]interface{}
+		err = json.Unmarshal(body, &doc)
+		assert.NoError(t, err)
+		assert.NotNil(t, doc)
+		assert.Equal(t, "3.0.3", doc["openapi"])
 		paths, ok := doc["paths"].(map[string]interface{})
 		assert.True(t, ok)
 		assert.Contains(t, paths, "/v1/Hello")
+	})
+
+	t.Run("Dynamic Swagger Schema Generation", func(t *testing.T) {
+		t.Run("Product Service", func(t *testing.T) {
+			svc := &ProductService{}
+			_, ts := setupServer(t, serverCfg, svc, "/v1")
+			defer ts.Close()
+
+			resp, err := http.Get(ts.URL + "/api/docs/swagger.json")
+			assert.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var doc map[string]interface{}
+			err = json.NewDecoder(resp.Body).Decode(&doc)
+			assert.NoError(t, err)
+
+			paths, ok := doc["paths"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Contains(t, paths, "/v1/Create")
+
+			// Verify POST /v1/Create
+			createPath, ok := paths["/v1/Create"].(map[string]interface{})
+			assert.True(t, ok)
+			postMethod, ok := createPath["post"].(map[string]interface{})
+			assert.True(t, ok)
+			requestBody, ok := postMethod["requestBody"].(map[string]interface{})
+			assert.True(t, ok)
+			content, ok := requestBody["content"].(map[string]interface{})
+			assert.True(t, ok)
+			jsonContent, ok := content["application/json"].(map[string]interface{})
+			assert.True(t, ok)
+			schema, ok := jsonContent["schema"].(map[string]interface{})
+			assert.True(t, ok)
+			properties, ok := schema["properties"].(map[string]interface{})
+			assert.True(t, ok)
+
+			idProp, ok := properties["id"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "integer", idProp["type"])
+			assert.Equal(t, float64(1), idProp["minimum"])
+
+			nameProp, ok := properties["name"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "string", nameProp["type"])
+			assert.Equal(t, float64(1), nameProp["minLength"])
+			assert.Equal(t, float64(100), nameProp["maxLength"])
+
+			priceProp, ok := properties["price"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "number", priceProp["type"])
+			assert.Equal(t, float64(0), priceProp["minimum"])
+
+			required, ok := schema["required"].([]interface{})
+			assert.True(t, ok)
+			assert.Contains(t, required, "id")
+			assert.Contains(t, required, "name")
+		})
+
+		t.Run("Customer Service", func(t *testing.T) {
+			svc := &CustomerService{}
+			_, ts := setupServer(t, serverCfg, svc, "/v2")
+			defer ts.Close()
+
+			resp, err := http.Get(ts.URL + "/api/docs/swagger.json")
+			assert.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var doc map[string]interface{}
+			err = json.NewDecoder(resp.Body).Decode(&doc)
+			assert.NoError(t, err)
+
+			paths, ok := doc["paths"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Contains(t, paths, "/v2/Create")
+
+			createPath, ok := paths["/v2/Create"].(map[string]interface{})
+			assert.True(t, ok)
+			postMethod, ok := createPath["post"].(map[string]interface{})
+			assert.True(t, ok)
+			requestBody, ok := postMethod["requestBody"].(map[string]interface{})
+			assert.True(t, ok)
+			content, ok := requestBody["content"].(map[string]interface{})
+			assert.True(t, ok)
+			jsonContent, ok := content["application/json"].(map[string]interface{})
+			assert.True(t, ok)
+			schema, ok := jsonContent["schema"].(map[string]interface{})
+			assert.True(t, ok)
+			properties, ok := schema["properties"].(map[string]interface{})
+			assert.True(t, ok)
+
+			emailProp, ok := properties["email"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "string", emailProp["type"])
+			assert.Equal(t, "email", emailProp["format"])
+
+			ageProp, ok := properties["age"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "integer", ageProp["type"])
+			assert.Equal(t, float64(18), ageProp["minimum"])
+			assert.Equal(t, float64(120), ageProp["maximum"])
+
+			addressProp, ok := properties["address"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "object", addressProp["type"])
+			addressProps, ok := addressProp["properties"].(map[string]interface{})
+			assert.True(t, ok)
+
+			streetProp, ok := addressProps["street"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "string", streetProp["type"])
+			assert.Equal(t, float64(1), streetProp["minLength"])
+			assert.Equal(t, float64(200), streetProp["maxLength"])
+
+			cityProp, ok := addressProps["city"].(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, "string", cityProp["type"])
+			assert.Equal(t, float64(1), cityProp["minLength"])
+			assert.Equal(t, float64(100), cityProp["maxLength"])
+
+			addressRequired, ok := addressProp["required"].([]interface{})
+			assert.True(t, ok)
+			assert.Contains(t, addressRequired, "street")
+			assert.Contains(t, addressRequired, "city")
+
+			required, ok := schema["required"].([]interface{})
+			assert.True(t, ok)
+			assert.Contains(t, required, "email")
+			assert.Contains(t, required, "address")
+		})
 	})
 
 	t.Run("Retry Backoff", func(t *testing.T) {
@@ -811,16 +1000,14 @@ func TestHTTPC(t *testing.T) {
 	})
 
 	t.Run("ListenAndServe", func(t *testing.T) {
-		// Test nil server
 		var server *Server
 		err := server.ListenAndServe()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "server cannot be nil")
 
-		// Test valid server
 		serverCfgMap, err := toConfigMap(ServerConfig{
 			OtelEnabled: false,
-			Port:        8080, // Use a valid port
+			Port:        8080,
 		})
 		assert.NoError(t, err)
 		serverConfig, err := config.New(config.WithDefault(serverCfgMap))
@@ -832,21 +1019,17 @@ func TestHTTPC(t *testing.T) {
 		assert.NotNil(t, server)
 		assert.NotNil(t, server.config)
 
-		// Run ListenAndServe in a goroutine to avoid blocking
 		errChan := make(chan error, 1)
 		go func() {
 			errChan <- server.ListenAndServe()
 		}()
 
-		// Wait briefly to ensure the server starts
 		time.Sleep(100 * time.Millisecond)
 
-		// Check for errors
 		select {
 		case err := <-errChan:
 			t.Fatalf("ListenAndServe failed: %v", err)
 		default:
-			// Server started successfully
 		}
 	})
 }
