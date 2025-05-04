@@ -10,8 +10,8 @@ func main() {
 	// Initialize logger with file output
 	cfg := logger.LoggerConfig{
 		Level:      "debug",
-		Output:     "file",
-		FilePath:   "app.log",
+		Output:     "console",
+		FilePath:   "",
 		JSONFormat: false,
 	}
 	if err := logger.InitWithConfig(cfg); err != nil {
