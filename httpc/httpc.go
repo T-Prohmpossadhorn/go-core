@@ -74,6 +74,25 @@ func NewServer(c *config.Config) (*Server, error) {
 	engine.GET("/api/docs/swagger.json", func(c *gin.Context) {
 		c.JSON(http.StatusOK, server.swagger)
 	})
+	engine.GET("/api/docs/index.html", func(c *gin.Context) {
+		html := `<!DOCTYPE html>
+<html>
+<head>
+  <title>Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+  <script>
+    window.onload = function() {
+      SwaggerUIBundle({ url: '/api/docs/swagger.json', dom_id: '#swagger-ui' });
+    }
+  </script>
+</body>
+</html>`
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+	})
 
 	logger.Info("Registering health and Swagger endpoints")
 	return server, nil
@@ -124,15 +143,12 @@ func (s *Server) RegisterService(svc interface{}, opts ...ServiceOption) error {
 func (s *Server) registerMethods(methods []MethodInfo, cfg *serviceConfig, svc interface{}) error {
 	for _, m := range methods {
 		path := fmt.Sprintf("%s/%s", cfg.prefix, m.Name)
-		switch strings.ToUpper(m.HTTPMethod) {
-		case http.MethodGet:
-			s.engine.GET(path, s.handleMethod(m))
-		case http.MethodPost, http.MethodPut, http.MethodDelete:
-			s.engine.Handle(m.HTTPMethod, path, s.handleMethod(m))
-		default:
+		method := strings.ToUpper(m.HTTPMethod)
+		if !isValidHTTPMethod(method) {
 			logger.Warn("Skipping invalid HTTP method", logger.String("method", m.HTTPMethod))
 			continue
 		}
+		s.engine.Handle(method, path, s.handleMethod(m))
 		logger.Info("Registered endpoint", logger.String("method", m.HTTPMethod), logger.String("path", path))
 	}
 
@@ -214,6 +230,10 @@ func (s *Server) handleMethod(m MethodInfo) gin.HandlerFunc {
 			logger.InfoContext(reqCtx, "Sending error response", logger.String("body", fmt.Sprintf(`{"error":"%s"}`, err.Error())))
 			c.Data(http.StatusInternalServerError, "application/json", []byte(`{"error":"`+err.Error()+`"}`))
 			logger.InfoContext(reqCtx, "After Data write", logger.Int("status", c.Writer.Status()), logger.Any("headers", c.Writer.Header()))
+			return
+		}
+		if strings.ToUpper(m.HTTPMethod) == http.MethodHead {
+			c.Status(http.StatusOK)
 			return
 		}
 
