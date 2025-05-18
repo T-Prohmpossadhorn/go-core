@@ -27,9 +27,8 @@ func main() {
 	}
 	defer otel.Shutdown(context.Background())
 
-	// Create tracer and span
-	tracer := otel.GetTracer("example")
-	ctx, span := tracer.Start(context.Background(), "example-span")
+	// Create a span without retrieving the tracer first
+	ctx, span := otel.StartSpan(context.Background(), "example", "example-span")
 	defer span.End()
 
 	// Log with span context

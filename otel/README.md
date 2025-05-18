@@ -17,7 +17,7 @@ The `otel` package is a lightweight, thread-safe OpenTelemetry setup for distrib
 
 ## Features
 - **OpenTelemetry Tracing**: Initializes a `TracerProvider` with an OTLP gRPC exporter for production or a mock exporter for testing.
-- **Span Management**: Provides `GetTracer` for creating named tracers and spans.
+- **Span Management**: Provides `GetTracer` and `StartSpan` for creating named tracers and spans without extra boilerplate.
 - **Thread-Safety**: Uses `sync.RWMutex` for safe concurrent access to the `TracerProvider`.
 - **Integration**: Leverages `config` for settings and `logger` for trace-aware logging (`trace_id`, `span_id`).
 - **Dynamic Log Level**: Automatically sets the log level to `debug` when the
@@ -90,9 +90,8 @@ func main() {
     }
     defer otel.Shutdown(context.Background())
 
-    // Create a tracer and start a span
-    tracer := otel.GetTracer("example-service")
-    ctx, span := tracer.Start(context.Background(), "process-request")
+    // Start a span directly without retrieving a tracer first
+    ctx, span := otel.StartSpan(context.Background(), "example-service", "process-request")
     defer span.End()
 
     // Simulate work
@@ -138,9 +137,8 @@ func main() {
     }
     defer otel.Shutdown(context.Background())
 
-    // Create a tracer and start a span
-    tracer := otel.GetTracer("user-service")
-    ctx, span := tracer.Start(context.Background(), "handle-user-request")
+    // Start a span directly without retrieving a tracer first
+    ctx, span := otel.StartSpan(context.Background(), "user-service", "handle-user-request")
     defer span.End()
 
     // Log with trace context
@@ -200,9 +198,8 @@ func main() {
     }
     defer otel.Shutdown(context.Background())
 
-    // Create a tracer and start a span
-    tracer := otel.GetTracer("order-service")
-    ctx, span := tracer.Start(context.Background(), "process-order")
+    // Start a span directly without retrieving a tracer first
+    ctx, span := otel.StartSpan(context.Background(), "order-service", "process-order")
     defer span.End()
 
     // Add baggage
@@ -221,8 +218,7 @@ func main() {
 
     // Simulate downstream service call with extracted context
     downstreamCtx := otel.GetTextMapPropagator().Extract(context.Background(), propagation.MapCarrier(carrier))
-    downstreamTracer := otel.GetTracer("payment-service")
-    downstreamCtx, downstreamSpan := downstreamTracer.Start(downstreamCtx, "process-payment")
+    downstreamCtx, downstreamSpan := otel.StartSpan(downstreamCtx, "payment-service", "process-payment")
     defer downstreamSpan.End()
 
     logger.InfoContext(downstreamCtx, "Processing payment",
