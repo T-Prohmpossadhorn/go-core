@@ -20,6 +20,8 @@ The `otel` package is a lightweight, thread-safe OpenTelemetry setup for distrib
 - **Span Management**: Provides `GetTracer` for creating named tracers and spans.
 - **Thread-Safety**: Uses `sync.RWMutex` for safe concurrent access to the `TracerProvider`.
 - **Integration**: Leverages `config` for settings and `logger` for trace-aware logging (`trace_id`, `span_id`).
+- **Dynamic Log Level**: Automatically sets the log level to `debug` when the
+  configuration has `debug` enabled.
 - **Propagation**: Supports W3C Trace Context and Baggage for distributed tracing.
 - **Mock Exporter**: Enables fast, network-free testing with `OTEL_TEST_MOCK_EXPORTER`.
 - **Minimal Dependencies**: Relies on OpenTelemetry, `config`, and `logger`.
