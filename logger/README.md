@@ -1,6 +1,6 @@
 # Logger Package
 
-The `logger` package is a lightweight, high-performance, and thread-safe logging solution for Go applications, built on top of the Zap logging library (v1.26.0). It provides structured logging with support for console and file output, JSON and Zap console formats, a variety of field types, and integration with OpenTelemetry (v1.29.0) for trace-aware logging. Designed for simplicity and efficiency, the package is ideal for applications requiring robust logging with minimal configuration.
+The `logger` package is a lightweight, high-performance, and thread-safe logging solution for Go applications, built on top of the Zap logging library (v1.27.0). It provides structured logging with support for console and file output, JSON and Zap console formats, a variety of field types, and integration with OpenTelemetry (v1.35.0) for trace-aware logging. Designed for simplicity and efficiency, the package is ideal for applications requiring robust logging with minimal configuration.
 
 ## Table of Contents
 - [Features](#features)
@@ -17,12 +17,13 @@ The `logger` package is a lightweight, high-performance, and thread-safe logging
 - [License](#license)
 
 ## Features
-- **High-Performance Logging**: Built on Zap v1.26.0, leveraging its efficient logging pipeline for minimal overhead.
+- **High-Performance Logging**: Built on Zap v1.27.0, leveraging its efficient logging pipeline for minimal overhead.
 - **Log Levels**: Supports `debug`, `info`, `warn`, `error`, and `fatal` (fatal exits the program).
 - **Output Options**: Logs to console or file, with JSON or Zap console formats.
 - **Structured Logging**: Supports field types: `string`, `int`, `float`, `bool`, `error`, and `any` (for arbitrary data like slices or structs).
 - **Context Support**: Offers both context-aware (`InfoContext`) and non-context-aware (`Info`) logging functions.
-- **OpenTelemetry Integration**: Automatically includes `trace_id` and `span_id` from the context for trace-aware logging using OpenTelemetry v1.29.0.
+- **OpenTelemetry Integration**: Automatically includes `trace_id` and `span_id` from the context for trace-aware logging using OpenTelemetry v1.35.0.
+- **Dynamic Level Control**: Adjust the log level at runtime via `logger.SetLevel()`.
 - **Thread-Safety**: Ensures safe concurrent access using `sync.RWMutex`.
 - **Performance Optimizations**: Minimizes allocations and contention with Zap’s encoders and efficient buffer management.
 - **Comprehensive Testing**: Includes tests for all log levels, field types, and output combinations.
@@ -37,15 +38,15 @@ go get github.com/your-org/logger
 ### Dependencies
 The package requires the following dependencies, which will be installed automatically with `go get`:
 
-- `go.uber.org/zap@v1.26.0`: Core logging library.
-- `go.opentelemetry.io/otel@v1.29.0`: OpenTelemetry for trace integration.
+ - `go.uber.org/zap@v1.27.0`: Core logging library.
+ - `go.opentelemetry.io/otel@v1.35.0`: OpenTelemetry for trace integration.
 - `github.com/stretchr/testify@v1.8.4`: Testing framework (for tests only).
 
 Add them to your `.LINE_ORDERgo.mod` explicitly if needed:
 
 ```bash
-go get go.uber.org/zap@v1.26.0
-go get go.opentelemetry.io/otel@v1.29.0
+go get go.uber.org/zap@v1.27.0
+go get go.opentelemetry.io/otel@v1.35.0
 go get github.com/stretchr/testify@v1.8.4
 ```
 
@@ -187,6 +188,10 @@ func main() {
         logger.String("component", "server"),
         logger.Int("port", 8080),
     )
+
+    // Increase verbosity at runtime
+    _ = logger.SetLevel("info")
+    logger.Info("Level updated")
 }
 ```
 
@@ -266,7 +271,7 @@ If you encounter compilation errors (e.g., related to `go.uber.org/zap` or `go.o
   go list -m go.uber.org/zap
   go list -m go.opentelemetry.io/otel
   ```
-  Ensure `go.uber.org/zap@v1.26.0` and `go.opentelemetry.io/otel@v1.29.0` are used.
+  Ensure `go.uber.org/zap@v1.27.0` and `go.opentelemetry.io/otel@v1.35.0` are used.
 - **Check Dependency Conflicts**:
   ```bash
   go mod graph | grep zap

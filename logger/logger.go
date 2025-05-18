@@ -59,6 +59,7 @@ type LoggerConfig struct {
 var (
 	globalLogger *zap.Logger
 	loggerMu     sync.RWMutex
+	levelCtrl    zap.AtomicLevel
 )
 
 // Init initializes the global logger with default settings (info level, console output, JSON format).
@@ -75,18 +76,18 @@ func InitWithConfig(cfg LoggerConfig) error {
 	loggerMu.Lock()
 	defer loggerMu.Unlock()
 
-	var level zapcore.Level
+	var lvl zapcore.Level
 	switch cfg.Level {
 	case "debug":
-		level = zapcore.DebugLevel
+		lvl = zapcore.DebugLevel
 	case "info":
-		level = zapcore.InfoLevel
+		lvl = zapcore.InfoLevel
 	case "warn":
-		level = zapcore.WarnLevel
+		lvl = zapcore.WarnLevel
 	case "error":
-		level = zapcore.ErrorLevel
+		lvl = zapcore.ErrorLevel
 	case "fatal":
-		level = zapcore.FatalLevel
+		lvl = zapcore.FatalLevel
 	default:
 		return fmt.Errorf("invalid log level: %s", cfg.Level)
 	}
@@ -116,12 +117,14 @@ func InitWithConfig(cfg LoggerConfig) error {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
+	levelCtrl = zap.NewAtomicLevelAt(lvl)
+
 	if cfg.JSONFormat {
 		encoder := zapcore.NewJSONEncoder(encoderConfig)
-		core = zapcore.NewCore(encoder, syncer, level)
+		core = zapcore.NewCore(encoder, syncer, levelCtrl)
 	} else {
 		encoder := zapcore.NewConsoleEncoder(encoderConfig)
-		core = zapcore.NewCore(encoder, syncer, level)
+		core = zapcore.NewCore(encoder, syncer, levelCtrl)
 	}
 
 	globalLogger = zap.New(core, zap.AddCaller())
@@ -136,6 +139,39 @@ func Sync() error {
 		return fmt.Errorf("logger not initialized")
 	}
 	return globalLogger.Sync()
+}
+
+// SetLevel changes the logging level at runtime.
+func SetLevel(level string) error {
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	if globalLogger == nil {
+		return fmt.Errorf("logger not initialized")
+	}
+	var lvl zapcore.Level
+	switch level {
+	case "debug":
+		lvl = zapcore.DebugLevel
+	case "info":
+		lvl = zapcore.InfoLevel
+	case "warn":
+		lvl = zapcore.WarnLevel
+	case "error":
+		lvl = zapcore.ErrorLevel
+	case "fatal":
+		lvl = zapcore.FatalLevel
+	default:
+		return fmt.Errorf("invalid log level: %s", level)
+	}
+	levelCtrl.SetLevel(lvl)
+	return nil
+}
+
+// GetLevel returns the current log level as a string.
+func GetLevel() string {
+	loggerMu.RLock()
+	defer loggerMu.RUnlock()
+	return levelCtrl.Level().String()
 }
 
 // Debug logs a debug-level message with default context.

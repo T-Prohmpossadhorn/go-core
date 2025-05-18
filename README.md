@@ -28,8 +28,12 @@ A structured logger with configurable log levels, contextual logging, and suppor
 ```go
 import "github.com/T-Prohmpossadhorn/go-core/logger"
 
-log := logger.New(logger.Config{Level: "info"})
-log.Info("Application started")
+if err := logger.Init(); err != nil {
+    panic(err)
+}
+defer logger.Sync()
+
+logger.Info("Application started")
 ```
 
 ---
