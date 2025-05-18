@@ -803,6 +803,47 @@ func TestInvalidSpanContext(t *testing.T) {
 	}
 }
 
+// TestSetLevel verifies changing log levels at runtime.
+func TestSetLevel(t *testing.T) {
+	cfg := LoggerConfig{
+		Level:      "info",
+		Output:     "console",
+		JSONFormat: true,
+	}
+	originalStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := InitWithConfig(cfg)
+	assert.NoError(t, err)
+
+	// This debug message should be filtered out
+	_ = Debug("before", String("key", "value"))
+
+	// Increase verbosity
+	err = SetLevel("debug")
+	assert.NoError(t, err)
+
+	_ = Debug("after", String("key", "value"))
+
+	err = Sync()
+	if err != nil {
+		t.Logf("Sync error (non-fatal): %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	w.Close()
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(r)
+	assert.NoError(t, err)
+	os.Stdout = originalStdout
+	out := buf.String()
+
+	assert.NotContains(t, out, "before")
+	assert.Contains(t, out, "after")
+}
+
 // performTestLogging executes a set of logging operations for testing.
 func performTestLogging(t *testing.T, ctx context.Context) {
 	err := InfoContext(ctx, "Test message",
