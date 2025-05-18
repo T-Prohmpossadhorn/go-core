@@ -186,3 +186,11 @@ func GetTracer(name string) oteltrace.Tracer {
 	logger.Debug("Returning tracer", logger.String("name", name), logger.Any("tracerProvider", tracerProvider))
 	return tracerProvider.Tracer(name)
 }
+
+// StartSpan is a convenience function that retrieves a tracer by name and
+// starts a span in a single call. It falls back to a noop tracer when the
+// tracer provider has not been initialized.
+func StartSpan(ctx context.Context, tracerName, spanName string) (context.Context, oteltrace.Span) {
+	tracer := GetTracer(tracerName)
+	return tracer.Start(ctx, spanName)
+}

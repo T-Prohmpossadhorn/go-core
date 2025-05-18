@@ -271,6 +271,24 @@ func TestOTel(t *testing.T) {
 		assert.True(t, found, "noop tracer warning log should be present")
 	})
 
+	t.Run("StartSpanNoInit", func(t *testing.T) {
+		logWriter, _, cleanup := setupLogger(t)
+		defer cleanup()
+		resetLogs(logWriter)
+
+		// Ensure tracerProvider is nil
+		otelMu.Lock()
+		tracerProvider = nil
+		otelMu.Unlock()
+
+		_, span := StartSpan(context.Background(), "test-otel", "test-span")
+		defer span.End()
+		assert.False(t, span.SpanContext().IsValid(), "span should be invalid when provider not initialized")
+
+		logString := getLogs(logWriter)
+		assert.Contains(t, logString, "TracerProvider not initialized")
+	})
+
 	t.Run("CustomConfig", func(t *testing.T) {
 		logWriter, _, cleanup := setupLogger(t)
 		defer cleanup()
@@ -914,6 +932,30 @@ func TestOTel(t *testing.T) {
 				t.Logf("Log output: %s", logString)
 			}
 			assert.True(t, found, "noop tracer warning log should be present")
+
+			err = Shutdown(context.Background())
+			assert.NoError(t, err)
+		})
+
+		t.Run("StartSpanHelper", func(t *testing.T) {
+			logWriter, _, cleanup := setupLogger(t)
+			defer cleanup()
+			resetLogs(logWriter)
+
+			// Reset global state
+			os.Unsetenv("OTEL_TEST_SHUTDOWN_TIMEOUT")
+			os.Unsetenv("OTEL_TEST_OTLP_FAIL")
+			os.Unsetenv("OTEL_TEST_STDOUT_FAIL")
+			otelMu.Lock()
+			tracerProvider = nil
+			otelMu.Unlock()
+
+			err := Init(cfg)
+			assert.NoError(t, err)
+
+			_, span := StartSpan(context.Background(), "helper-service", "helper-span")
+			assert.True(t, span.SpanContext().IsValid(), "span should be valid")
+			span.End()
 
 			err = Shutdown(context.Background())
 			assert.NoError(t, err)

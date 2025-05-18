@@ -47,10 +47,9 @@ Helpers for integrating OpenTelemetry into your application with support for tra
 ```go
 import "github.com/T-Prohmpossadhorn/go-core/otel"
 
-otelTracer := otel.NewTracer("my-service")
-ctx, span := otelTracer.Start(context.Background(), "my-operation")
+ctx, span := otel.StartSpan(context.Background(), "my-service", "my-operation")
+defer span.End()
 // ... perform work ...
-span.End()
 ```
 
 ---
