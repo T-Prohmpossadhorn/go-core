@@ -14,7 +14,8 @@ import (
 
 func main() {
 	// Initialize config with environment variables
-	cfg, err := config.New(config.WithEnv("CONFIG_"))
+	// The prefix can include a trailing underscore, which is ignored.
+	cfg, err := config.New(config.WithEnv("CONFIG"))
 	if err != nil {
 		fmt.Printf("Failed to initialize config: %v\n", err)
 		return

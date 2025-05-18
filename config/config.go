@@ -74,6 +74,7 @@ func WithEnv(prefix string) Option {
 	return func(c *Config) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		prefix = strings.TrimSuffix(prefix, "_")
 		c.v.SetEnvPrefix(strings.ToUpper(prefix))
 		c.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 		c.v.AutomaticEnv()
