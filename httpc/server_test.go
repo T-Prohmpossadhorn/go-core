@@ -2,6 +2,7 @@ package httpc
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -53,5 +54,25 @@ func TestHTTPServer(t *testing.T) {
 		assert.True(t, ok, "Expected paths in Swagger JSON")
 		assert.Contains(t, paths, "/v1/Hello", "Expected /v1/Hello in paths")
 		assert.Contains(t, paths, "/v1/Create", "Expected /v1/Create in paths")
+	})
+
+	t.Run("Swagger UI", func(t *testing.T) {
+		server, err := NewServer(cfg)
+		assert.NoError(t, err)
+
+		svc := &TestService{}
+		err = server.RegisterService(svc, WithPathPrefix("/v1"))
+		assert.NoError(t, err)
+
+		ts := httptest.NewServer(server.engine)
+		defer ts.Close()
+
+		resp, err := http.Get(ts.URL + "/api/docs/index.html")
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		assert.NoError(t, err)
+		assert.Contains(t, string(bodyBytes), "Swagger UI")
 	})
 }

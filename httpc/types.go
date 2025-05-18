@@ -1,6 +1,7 @@
 package httpc
 
 import (
+	"net/http"
 	"reflect"
 	"strings"
 )
@@ -30,7 +31,17 @@ func WithPathPrefix(prefix string) ServiceOption {
 
 // isValidHTTPMethod checks if the given method is a valid HTTP method
 func isValidHTTPMethod(method string) bool {
-	validMethods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+	validMethods := []string{
+		http.MethodGet,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodDelete,
+		http.MethodPatch,
+		http.MethodOptions,
+		http.MethodHead,
+		http.MethodConnect,
+		http.MethodTrace,
+	}
 	for _, valid := range validMethods {
 		if strings.ToUpper(method) == valid {
 			return true
