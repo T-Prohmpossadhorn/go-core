@@ -66,6 +66,12 @@ func validateEndpoint(endpoint string) error {
 }
 
 func Init(c *config.Config) error {
+	level := "info"
+	if c.GetBool("debug") {
+		level = "debug"
+	}
+	_ = logger.SetLevel(level)
+
 	cfg := OTelConfig{
 		Endpoint: c.GetStringWithDefault("otel_endpoint", "localhost:4317"),
 		Insecure: c.GetBool("otel_insecure"),
