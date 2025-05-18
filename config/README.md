@@ -4,7 +4,7 @@ The `config` package provides a thread-safe configuration management system for 
 
 ## Features
 - Load configuration from YAML or JSON files.
-- Load configuration from environment variables with a prefix.
+- Load configuration from environment variables with a prefix (with or without a trailing underscore).
 - Thread-safe access to configuration values.
 - Retrieve values as strings, booleans, or string maps with defaults.
 - Define configuration fields with required and default values using struct tags.
@@ -42,12 +42,13 @@ app:
 }
 ```
 
-### Environment Variables (with prefix `CONFIG_`):
+### Environment Variables (with prefix `CONFIG`):
 ```bash
 export CONFIG_ENVIRONMENT=production
 export CONFIG_DEBUG=true
 export CONFIG_APP_NAME=my-app
 export CONFIG_APP_PORT=9090
+# The prefix can be provided to `WithEnv` with or without the trailing underscore.
 ```
 
 ### ConfigStruct
@@ -265,7 +266,7 @@ App Name: my-app
   - Options: `WithFilepath(string)`, `WithDefault(map[string]interface{})`, `WithEnv(string)`.
 - `WithFilepath(path string) Option`: Sets the configuration file path (YAML or JSON).
 - `WithDefault(defaults map[string]interface{}) Option`: Sets default configuration values, supporting nested keys (e.g., `app.name`).
-- `WithEnv(prefix string) Option`: Enables environment variable loading with the given prefix (e.g., `CONFIG`), mapping underscores to dots (e.g., `CONFIG_APP_NAME` to `app.name`).
+- `WithEnv(prefix string) Option`: Enables environment variable loading with the given prefix (e.g., `CONFIG`). The prefix may include a trailing underscore, which will be ignored. Environment variables map underscores to dots (e.g., `CONFIG_APP_NAME` to `app.name`).
 
 ### Methods
 - `Get(key string) interface{}`: Retrieves a raw configuration value.
