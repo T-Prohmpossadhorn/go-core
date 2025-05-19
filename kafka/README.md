@@ -139,11 +139,14 @@ fmt.Println(msg.Name)
 With tracing enabled, log entries include `trace_id` and `span_id` so you can correlate events across services.
 
 ## Configuration
-| Key             | Type   | Default          |
-| --------------- | ------ | ---------------- |
-| `kafka_brokers` | string | `localhost:9092` |
-| `kafka_topic`   | string | `default`        |
-| `otel_enabled`  | bool   | `false`          |
+| Key              | Type   | Default          |
+| ---------------- | ------ | ---------------- |
+| `kafka_brokers`  | string | `localhost:9092` |
+| `kafka_topic`    | string | `default`        |
+| `otel_enabled`   | bool   | `false`          |
+| `kafka_enable_tls` | bool | `false`          |
+| `kafka_username`   | string | ``              |
+| `kafka_password`   | string | ``              |
 
 Configuration can be loaded from files or environment variables. Example environment usage:
 

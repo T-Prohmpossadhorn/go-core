@@ -42,8 +42,8 @@ func TestKafkaPublishConsumeMock(t *testing.T) {
 	close(mr.ch)
 
 	origW, origR := writerFactoryFunc, readerFactoryFunc
-	writerFactoryFunc = func([]string, string) writer { return mw }
-	readerFactoryFunc = func([]string, string) reader { return mr }
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
+	readerFactoryFunc = func([]string, string, Config) reader { return mr }
 	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
 
 	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
@@ -73,8 +73,8 @@ func TestKafkaPublishConsumeJSONMock(t *testing.T) {
 	close(mr.ch)
 
 	origW, origR := writerFactoryFunc, readerFactoryFunc
-	writerFactoryFunc = func([]string, string) writer { return mw }
-	readerFactoryFunc = func([]string, string) reader { return mr }
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
+	readerFactoryFunc = func([]string, string, Config) reader { return mr }
 	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
 
 	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
@@ -99,8 +99,8 @@ func TestKafkaCloseMock(t *testing.T) {
 	mr := &mockReader{ch: make(chan kafka_go.Message)}
 
 	origW, origR := writerFactoryFunc, readerFactoryFunc
-	writerFactoryFunc = func([]string, string) writer { return mw }
-	readerFactoryFunc = func([]string, string) reader { return mr }
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
+	readerFactoryFunc = func([]string, string, Config) reader { return mr }
 	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
 
 	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
@@ -118,7 +118,7 @@ func TestKafkaPublishCanceledMock(t *testing.T) {
 	mw := &mockWriter{}
 
 	origW := writerFactoryFunc
-	writerFactoryFunc = func([]string, string) writer { return mw }
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
 	defer func() { writerFactoryFunc = origW }()
 
 	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
@@ -135,8 +135,8 @@ func TestKafkaPublishInjectsTraceContext(t *testing.T) {
 	mw := &mockWriter{}
 	mr := &mockReader{ch: make(chan kafka_go.Message)}
 	origW, origR := writerFactoryFunc, readerFactoryFunc
-	writerFactoryFunc = func([]string, string) writer { return mw }
-	readerFactoryFunc = func([]string, string) reader { return mr }
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
+	readerFactoryFunc = func([]string, string, Config) reader { return mr }
 	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
 
 	cfg, _ := config.New(config.WithDefault(map[string]interface{}{
