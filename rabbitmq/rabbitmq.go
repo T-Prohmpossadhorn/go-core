@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -179,4 +180,34 @@ func (r *RabbitMQ) Close() error {
 	}
 	logger.Info("RabbitMQ closed")
 	return nil
+}
+
+// PublishJSON marshals v as JSON and publishes it to the specified queue.
+func PublishJSON[T any](ctx context.Context, r *RabbitMQ, queue string, v T) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal message: %w", err)
+	}
+	return r.Publish(ctx, queue, b)
+}
+
+// ConsumeJSON consumes messages from the queue and unmarshals them into type T.
+func ConsumeJSON[T any](ctx context.Context, r *RabbitMQ, queue string) (<-chan T, error) {
+	byteCh, err := r.Consume(ctx, queue)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan T)
+	go func() {
+		defer close(out)
+		for b := range byteCh {
+			var v T
+			if err := json.Unmarshal(b, &v); err != nil {
+				_ = logger.ErrorContext(ctx, "Failed to unmarshal message", logger.ErrField(err))
+				continue
+			}
+			out <- v
+		}
+	}()
+	return out, nil
 }

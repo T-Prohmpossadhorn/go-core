@@ -44,7 +44,7 @@ go get github.com/T-Prohmpossadhorn/go-core/otel
 ```
 
 ## Usage
-The package exposes `New`, `Publish`, `Consume`, and `Close` functions. Below are common scenarios.
+The package exposes `New`, `Publish`, `Consume`, `PublishJSON`, `ConsumeJSON`, and `Close` functions. Below are common scenarios.
 
 ### Basic Publishing
 Create a queue and publish a message:
@@ -70,7 +70,11 @@ func main() {
     rmq, _ := rabbitmq.New(cfg)
     defer rmq.Close()
 
-    _ = rmq.Publish(context.Background(), "tasks", []byte("hello"))
+    type Task struct {
+        Name string `json:"name"`
+    }
+
+    _ = rabbitmq.PublishJSON(context.Background(), rmq, "tasks", Task{Name: "hello"})
 }
 ```
 
@@ -97,9 +101,13 @@ func main() {
     rmq, _ := rabbitmq.New(cfg)
     defer rmq.Close()
 
-    msgs, _ := rmq.Consume(context.Background(), "tasks")
+    type Task struct {
+        Name string `json:"name"`
+    }
+
+    msgs, _ := rabbitmq.ConsumeJSON[Task](context.Background(), rmq, "tasks")
     for msg := range msgs {
-        fmt.Println(string(msg))
+        fmt.Println(msg.Name)
     }
 }
 ```
@@ -120,11 +128,15 @@ defer otel.Shutdown(context.Background())
 
 rmq, _ := rabbitmq.New(cfg)
 ctx := context.Background()
-_ = rmq.Publish(ctx, "tasks", []byte("traced message"))
+type Task struct {
+    Name string `json:"name"`
+}
 
-msgs, _ := rmq.Consume(context.Background(), "tasks")
+_ = rabbitmq.PublishJSON(ctx, rmq, "tasks", Task{Name: "traced message"})
+
+msgs, _ := rabbitmq.ConsumeJSON[Task](context.Background(), rmq, "tasks")
 msg := <-msgs
-fmt.Println(string(msg))
+fmt.Println(msg.Name)
 ```
 
 Logs produced by `Publish` and `Consume` will include `trace_id` and `span_id` fields when tracing is enabled.

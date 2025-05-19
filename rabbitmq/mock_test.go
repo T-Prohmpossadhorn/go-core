@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -77,6 +78,37 @@ func TestRabbitMQPublishConsumeMock(t *testing.T) {
 
 	msg := <-out
 	require.Equal(t, []byte("consumed"), msg)
+}
+
+func TestRabbitMQPublishConsumeJSONMock(t *testing.T) {
+	type msg struct {
+		Name string `json:"name"`
+	}
+
+	ch := &mockChannel{consumeCh: make(chan amqp.Delivery, 1)}
+	b, _ := json.Marshal(msg{Name: "consumed"})
+	ch.consumeCh <- amqp.Delivery{Body: b}
+	close(ch.consumeCh)
+
+	origDial := dialFunc
+	dialFunc = func(string) (amqpConn, error) { return &mockConn{ch: ch}, nil }
+	defer func() { dialFunc = origDial }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
+	rmq, err := New(cfg)
+	require.NoError(t, err)
+
+	out, err := ConsumeJSON[msg](context.Background(), rmq, "q1")
+	require.NoError(t, err)
+
+	require.NoError(t, PublishJSON(context.Background(), rmq, "q1", msg{Name: "hello"}))
+	require.Len(t, ch.published, 1)
+	var sent msg
+	_ = json.Unmarshal(ch.published[0].Body, &sent)
+	require.Equal(t, "hello", sent.Name)
+
+	m := <-out
+	require.Equal(t, "consumed", m.Name)
 }
 
 func TestRabbitMQCloseMock(t *testing.T) {

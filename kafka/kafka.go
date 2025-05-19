@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -176,4 +177,34 @@ func (k *Kafka) Close() error {
 	k.readers = map[string]reader{}
 	logger.Info("Kafka closed")
 	return nil
+}
+
+// PublishJSON marshals v as JSON and publishes it to the specified topic.
+func PublishJSON[T any](ctx context.Context, k *Kafka, topic string, v T) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal message: %w", err)
+	}
+	return k.Publish(ctx, topic, b)
+}
+
+// ConsumeJSON consumes messages from the topic and unmarshals them into type T.
+func ConsumeJSON[T any](ctx context.Context, k *Kafka, topic string) (<-chan T, error) {
+	byteCh, err := k.Consume(ctx, topic)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan T)
+	go func() {
+		defer close(out)
+		for b := range byteCh {
+			var v T
+			if err := json.Unmarshal(b, &v); err != nil {
+				_ = logger.ErrorContext(ctx, "Failed to unmarshal message", logger.ErrField(err))
+				continue
+			}
+			out <- v
+		}
+	}()
+	return out, nil
 }

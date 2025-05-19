@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"testing"
@@ -58,6 +59,39 @@ func TestKafkaPublishConsumeMock(t *testing.T) {
 
 	msg := <-out
 	require.Equal(t, []byte("consumed"), msg)
+}
+
+func TestKafkaPublishConsumeJSONMock(t *testing.T) {
+	type msg struct {
+		Name string `json:"name"`
+	}
+
+	mw := &mockWriter{}
+	mr := &mockReader{ch: make(chan kafka_go.Message, 1)}
+	b, _ := json.Marshal(msg{Name: "consumed"})
+	mr.ch <- kafka_go.Message{Value: b}
+	close(mr.ch)
+
+	origW, origR := writerFactoryFunc, readerFactoryFunc
+	writerFactoryFunc = func([]string, string) writer { return mw }
+	readerFactoryFunc = func([]string, string) reader { return mr }
+	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
+	k, err := New(cfg)
+	require.NoError(t, err)
+
+	out, err := ConsumeJSON[msg](context.Background(), k, "t1")
+	require.NoError(t, err)
+
+	require.NoError(t, PublishJSON(context.Background(), k, "t1", msg{Name: "hello"}))
+	require.Len(t, mw.msgs, 1)
+	var sent msg
+	_ = json.Unmarshal(mw.msgs[0].Value, &sent)
+	require.Equal(t, "hello", sent.Name)
+
+	m := <-out
+	require.Equal(t, "consumed", m.Name)
 }
 
 func TestKafkaCloseMock(t *testing.T) {
