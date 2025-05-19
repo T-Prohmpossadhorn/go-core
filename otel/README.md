@@ -242,6 +242,7 @@ The `otel` package is configured via the `OTelConfig` struct, loaded by the `con
 type OTelConfig struct {
     Endpoint string `mapstructure:"otel_endpoint" default:"localhost:4317"`
     Insecure bool   `mapstructure:"otel_insecure" default:"true"`
+    Enabled  bool   `mapstructure:"otel_enabled" default:"false"`
 }
 ```
 
@@ -254,17 +255,23 @@ type OTelConfig struct {
   - Environment variable: `CONFIG_OTEL_INSECURE`
   - Config file key: `otel_insecure`
   - Default: `true`
+- **Enabled**: Toggle OpenTelemetry initialization.
+  - Environment variable: `CONFIG_OTEL_ENABLED`
+  - Config file key: `otel_enabled`
+  - Default: `false`
 
 **Example Config File (config.yaml)**:
 ```yaml
 otel_endpoint: "otel-collector:4317"
 otel_insecure: false
+otel_enabled: true
 ```
 
 **Example Environment Variable**:
 ```bash
 export CONFIG_OTEL_ENDPOINT=otel-collector:4317
 export CONFIG_OTEL_INSECURE=false
+export CONFIG_OTEL_ENABLED=true
 ```
 
 ## Testing
