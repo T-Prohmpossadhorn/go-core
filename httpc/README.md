@@ -19,12 +19,13 @@ The `httpc` package is a Gin-based HTTP server and client for Go applications, p
 - [License](#license)
 
 ## Features
-- **Gin-Based Server**: Uses `github.com/gin-gonic/gin@v1.10.0` for routing and middleware, supporting GET, POST, PUT, and DELETE methods with extensible endpoint registration via `ListenAndServe`.
-- **HTTP Client**: Sends HTTP requests with configurable timeouts, retries, and backoff, supporting GET, POST, PUT, and DELETE with JSON payloads and string/struct responses.
+- **Gin-Based Server**: Uses `github.com/gin-gonic/gin@v1.10.0` for routing and middleware, supporting all standard HTTP methods (GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, CONNECT, TRACE) with extensible endpoint registration via `ListenAndServe`, with HEAD requests returning headers only.
+- **HTTP Client**: Sends HTTP requests with configurable timeouts, retries, and backoff, supporting all standard HTTP methods with JSON payloads and string/struct responses.
 - **Reflection-Based Service Registration**: Registers service methods as HTTP endpoints using `RegisterMethods`, supporting both pointer and non-pointer service types for flexibility.
 - **Complex JSON Support**: Handles nested JSON payloads with strict validation using `github.com/go-playground/validator/v10@v10.26.0`, enforcing required fields, length constraints, and custom rules.
 - **Healthcheck**: `/health` endpoint returning `200 OK` with `{"status":"healthy"}`.
 - **Swagger Documentation**: Generates OpenAPI 3.0.3 JSON at `/api/docs/swagger.json` for registered endpoints, reflecting service methods and schemas.
+- **Swagger UI**: Interactive Swagger UI available at `/api/docs/index.html` for visual API exploration.
 - **Mandatory Integration**: Uses `config` for settings and `logger` for request logging with structured JSON output.
 - **Optional Tracing**: Supports `go.opentelemetry.io/otel@v1.24.0` for request tracing when enabled, for both server and client.
 - **Graceful Shutdown**: Supports graceful server shutdown via `Shutdown` method, handling active connections with a configurable timeout.
@@ -285,6 +286,7 @@ curl http://localhost:8080/health
 
 ### OpenAPI Documentation
 Access the OpenAPI 3.0.3 JSON at `http://localhost:8080/api/docs/swagger.json` to explore the API. The dynamically generated documentation reflects service methods, schemas, and validation rules.
+For a graphical interface, visit `http://localhost:8080/api/docs/index.html` to view the Swagger UI.
 
 Example:
 ```bash
