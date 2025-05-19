@@ -3,11 +3,13 @@ package kafka
 import (
 	"context"
 	"io"
+	"os"
 	"testing"
 
 	kafka_go "github.com/segmentio/kafka-go"
 
 	"github.com/T-Prohmpossadhorn/go-core/config"
+	"github.com/T-Prohmpossadhorn/go-core/otel"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,4 +95,38 @@ func TestKafkaPublishCanceledMock(t *testing.T) {
 	cancel()
 	err = k.Publish(ctx, "t1", []byte("x"))
 	require.Error(t, err)
+}
+
+func TestKafkaPublishInjectsTraceContext(t *testing.T) {
+	mw := &mockWriter{}
+	mr := &mockReader{ch: make(chan kafka_go.Message)}
+	origW, origR := writerFactoryFunc, readerFactoryFunc
+	writerFactoryFunc = func([]string, string) writer { return mw }
+	readerFactoryFunc = func([]string, string) reader { return mr }
+	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{
+		"otel_enabled": true,
+	}))
+
+	os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
+	defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+	require.NoError(t, otel.Init(cfg))
+	defer otel.Shutdown(context.Background())
+
+	k, err := New(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, k.Publish(ctx, "t1", []byte("msg")))
+	require.Len(t, mw.msgs, 1)
+
+	found := false
+	for _, h := range mw.msgs[0].Headers {
+		if h.Key == "traceparent" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "traceparent header not found")
 }

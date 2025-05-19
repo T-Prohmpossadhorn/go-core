@@ -8,6 +8,9 @@ import (
 
 	kafka_go "github.com/segmentio/kafka-go"
 
+	otelglobal "go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
 	"github.com/T-Prohmpossadhorn/go-core/otel"
@@ -101,7 +104,17 @@ func (k *Kafka) Publish(ctx context.Context, topic string, body []byte) error {
 	}
 	k.mu.Unlock()
 
-	err := w.WriteMessages(ctx, kafka_go.Message{Value: body})
+	var headers []kafka_go.Header
+	if k.cfg.OtelEnabled {
+		carrier := propagation.MapCarrier{}
+		otelglobal.GetTextMapPropagator().Inject(ctx, carrier)
+		headers = make([]kafka_go.Header, 0, len(carrier))
+		for k, v := range carrier {
+			headers = append(headers, kafka_go.Header{Key: k, Value: []byte(v)})
+		}
+	}
+
+	err := w.WriteMessages(ctx, kafka_go.Message{Value: body, Headers: headers})
 	if err != nil {
 		return fmt.Errorf("write message: %w", err)
 	}
@@ -132,6 +145,15 @@ func (k *Kafka) Consume(ctx context.Context, topic string) (<-chan []byte, error
 			m, err := r.ReadMessage(ctx)
 			if err != nil {
 				return
+			}
+			if k.cfg.OtelEnabled {
+				carrier := propagation.MapCarrier{}
+				for _, h := range m.Headers {
+					carrier[h.Key] = string(h.Value)
+				}
+				msgCtx := otelglobal.GetTextMapPropagator().Extract(ctx, carrier)
+				_, span := otel.StartSpan(msgCtx, k.tracerName, "ConsumeMessage")
+				span.End()
 			}
 			out <- m.Value
 		}

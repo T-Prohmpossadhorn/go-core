@@ -14,7 +14,7 @@ import (
 )
 
 type mockChannel struct {
-	published  [][]byte
+	published  []amqp.Publishing
 	consumeCh  chan amqp.Delivery
 	closed     bool
 	declareErr error
@@ -30,7 +30,7 @@ func (m *mockChannel) PublishWithContext(ctx context.Context, exchange, key stri
 	if m.publishErr != nil {
 		return m.publishErr
 	}
-	m.published = append(m.published, msg.Body)
+	m.published = append(m.published, msg)
 	return nil
 }
 
@@ -73,7 +73,7 @@ func TestRabbitMQPublishConsumeMock(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, rmq.Publish(context.Background(), "q1", []byte("hello")))
-	require.Equal(t, []byte("hello"), ch.published[0])
+	require.Equal(t, []byte("hello"), ch.published[0].Body)
 
 	msg := <-out
 	require.Equal(t, []byte("consumed"), msg)
@@ -205,4 +205,30 @@ func TestRabbitMQPublishDeclareErrorMock(t *testing.T) {
 
 	err = rmq.Publish(context.Background(), "q", []byte("x"))
 	require.Error(t, err)
+}
+
+func TestRabbitMQPublishInjectsTraceContext(t *testing.T) {
+	ch := &mockChannel{consumeCh: make(chan amqp.Delivery)}
+	origDial := dialFunc
+	dialFunc = func(string) (amqpConn, error) { return &mockConn{ch: ch}, nil }
+	defer func() { dialFunc = origDial }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{
+		"otel_enabled": true,
+	}))
+
+	os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
+	defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+	require.NoError(t, otel.Init(cfg))
+	defer otel.Shutdown(context.Background())
+
+	rmq, err := New(cfg)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, rmq.Publish(ctx, "q1", []byte("msg")))
+	require.Len(t, ch.published, 1)
+
+	_, found := ch.published[0].Headers["traceparent"]
+	require.True(t, found, "traceparent header not found")
 }
