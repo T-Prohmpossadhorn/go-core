@@ -13,7 +13,7 @@ import (
 // headService provides a HEAD method for testing.
 type headService struct{}
 
-func (s headService) HeadMethod() (string, error) { return "", nil }
+func (s headService) HeadMethod(name string) (string, error) { return name, nil }
 func (s headService) RegisterMethods() []MethodInfo {
 	return []MethodInfo{{Name: "HeadMethod", HTTPMethod: http.MethodHead, InputType: reflect.TypeOf(""), OutputType: reflect.TypeOf(""), Func: reflect.ValueOf(s).MethodByName("HeadMethod")}}
 }
@@ -52,7 +52,7 @@ func TestHandleMethodHead(t *testing.T) {
 	}
 	ts := httptest.NewServer(srv.engine)
 	defer ts.Close()
-	resp, err := http.Head(ts.URL + "/v1/HeadMethod")
+	resp, err := http.Head(ts.URL + "/v1/HeadMethod?name=head")
 	if err != nil {
 		t.Fatalf("head request failed: %v", err)
 	}

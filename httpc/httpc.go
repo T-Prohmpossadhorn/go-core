@@ -179,7 +179,7 @@ func (s *Server) handleMethod(m MethodInfo) gin.HandlerFunc {
 		inputType := m.InputType
 		if inputType.Kind() == reflect.String {
 			// For string inputs, use query parameter directly
-			if m.HTTPMethod == http.MethodGet {
+			if m.HTTPMethod == http.MethodGet || m.HTTPMethod == http.MethodHead {
 				query := c.Query("name")
 				inputVal = query
 			} else {
