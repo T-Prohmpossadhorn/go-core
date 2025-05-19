@@ -71,6 +71,25 @@ defer rmq.Close()
 rmq.Publish(context.Background(), "q", []byte("hello"))
 ```
 
+### kafka
+
+An in-memory queue with a Kafka-style API.
+
+**Example:**
+
+```go
+import (
+    "context"
+    "github.com/T-Prohmpossadhorn/go-core/config"
+    "github.com/T-Prohmpossadhorn/go-core/kafka"
+)
+
+cfg, _ := config.New()
+k, _ := kafka.New(cfg)
+defer k.Close()
+k.Publish(context.Background(), "q", []byte("hello"))
+```
+
 ---
 
 ## Testing
@@ -104,6 +123,7 @@ go-core/
 ├── otel/           # OpenTelemetry support
 ├── httpc/          # HTTP server and client
 ├── rabbitmq/       # In-memory message queue
+├── kafka/          # In-memory message queue
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -135,3 +155,4 @@ T-Prohmpossadhorn
 - [otel/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/otel/README.md)
 - [httpc/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/httpc/README.md)
 - [rabbitmq/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/rabbitmq/README.md)
+- [kafka/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/kafka/README.md)
