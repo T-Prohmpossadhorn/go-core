@@ -37,13 +37,11 @@ func main() {
 		panic("Failed to initialize config: " + err.Error())
 	}
 
-	// Initialize otel if enabled
-	if cfg.GetBool("otel_enabled") {
-		if err := otel.Init(cfg); err != nil {
-			panic("Failed to initialize otel: " + err.Error())
-		}
-		defer otel.Shutdown(context.Background())
+	// Initialize otel
+	if err := otel.Init(cfg); err != nil {
+		panic("Failed to initialize otel: " + err.Error())
 	}
+	defer otel.Shutdown(context.Background())
 
 	// Create client
 	client, err := httpc.NewHTTPClient(cfg)

@@ -79,6 +79,8 @@ func resetLogs(writer *syncWriter) {
 }
 
 func TestOTel(t *testing.T) {
+	os.Setenv("CONFIG_OTEL_ENABLED", "true")
+	defer os.Unsetenv("CONFIG_OTEL_ENABLED")
 	cfg, err := config.New(config.WithEnv("CONFIG"))
 	assert.NoError(t, err)
 	t.Logf("Config loaded: %+v", cfg)
@@ -305,6 +307,7 @@ func TestOTel(t *testing.T) {
 		otelCfg := OTelConfig{
 			Endpoint: "otel-collector:4317",
 			Insecure: false,
+			Enabled:  true,
 		}
 		err := InitWithConfig(cfg, otelCfg)
 		assert.NoError(t, err)
@@ -403,6 +406,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "invalid.invalid:4317",
 				Insecure: true,
+				Enabled:  true,
 			}
 			errChan := make(chan error, 1)
 			go func() {
@@ -451,6 +455,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "localhost:0",
 				Insecure: true,
+				Enabled:  true,
 			}
 			errChan := make(chan error, 1)
 			go func() {
@@ -499,6 +504,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "invalid:endpoint",
 				Insecure: true,
+				Enabled:  true,
 			}
 			errChan := make(chan error, 1)
 			go func() {
@@ -550,6 +556,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "localhost:4317",
 				Insecure: false,
+				Enabled:  true,
 			}
 			errChan := make(chan error, 1)
 			go func() {
@@ -598,6 +605,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "localhost:4317",
 				Insecure: true,
+				Enabled:  true,
 			}
 			err := InitWithConfig(cfg, otelCfg)
 			assert.NoError(t, err, "should succeed with insecure endpoint")
@@ -652,6 +660,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "",
 				Insecure: true,
+				Enabled:  true,
 			}
 			err := InitWithConfig(cfg, otelCfg)
 			assert.NoError(t, err, "should succeed with stdout exporter")
@@ -709,6 +718,7 @@ func TestOTel(t *testing.T) {
 			otelCfg := OTelConfig{
 				Endpoint: "",
 				Insecure: true,
+				Enabled:  true,
 			}
 			err := InitWithConfig(cfg, otelCfg)
 			assert.Error(t, err, "should fail with simulated stdout exporter error")
@@ -1049,6 +1059,7 @@ func TestOTel(t *testing.T) {
 				config.WithDefault(map[string]interface{}{
 					"otel_endpoint": "invalid.invalid:4317",
 					"otel_insecure": true,
+					"otel_enabled":  true,
 				}),
 			)
 			assert.NoError(t, err)

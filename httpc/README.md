@@ -146,12 +146,10 @@ func main() {
         panic("Failed to initialize config: " + err.Error())
     }
 
-    if cfg.GetBool("otel_enabled") {
-        if err := otel.Init(cfg); err != nil {
-            panic("Failed to initialize otel: " + err.Error())
-        }
-        defer otel.Shutdown(context.Background())
+    if err := otel.Init(cfg); err != nil {
+        panic("Failed to initialize otel: " + err.Error())
     }
+    defer otel.Shutdown(context.Background())
 
     server, err := httpc.NewServer(cfg)
     if err != nil {
@@ -457,14 +455,12 @@ The `httpc` package supports OpenTelemetry tracing for both server and client wh
    ```
 
 3. **Initialize OpenTelemetry**:
-   Before creating the server or client, initialize otel if tracing is enabled:
+   Before creating the server or client, initialize otel:
    ```go
-   if cfg.GetBool("otel_enabled") {
-       if err := otel.Init(cfg); err != nil {
-           panic("Failed to initialize otel: " + err.Error())
-       }
-       defer otel.Shutdown(context.Background())
+   if err := otel.Init(cfg); err != nil {
+       panic("Failed to initialize otel: " + err.Error())
    }
+   defer otel.Shutdown(context.Background())
    ```
 
 4. **Verify Traces**:

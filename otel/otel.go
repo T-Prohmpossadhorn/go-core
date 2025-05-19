@@ -23,6 +23,7 @@ import (
 type OTelConfig struct {
 	Endpoint string `mapstructure:"otel_endpoint" default:"localhost:4317"`
 	Insecure bool   `mapstructure:"otel_insecure" default:"true"`
+	Enabled  bool   `mapstructure:"otel_enabled" default:"false"`
 }
 
 var (
@@ -75,6 +76,7 @@ func Init(c *config.Config) error {
 	cfg := OTelConfig{
 		Endpoint: c.GetStringWithDefault("otel_endpoint", "localhost:4317"),
 		Insecure: c.GetBool("otel_insecure"),
+		Enabled:  c.GetBool("otel_enabled"),
 	}
 	return InitWithConfig(c, cfg)
 }
@@ -85,6 +87,12 @@ func InitWithConfig(c *config.Config, cfg OTelConfig) error {
 
 	ctx := context.Background()
 	logger.Info("Initializing OpenTelemetry", logger.Any("config", cfg))
+
+	if !cfg.Enabled {
+		logger.Info("OpenTelemetry disabled via config")
+		tracerProvider = nil
+		return nil
+	}
 
 	// Validate endpoint
 	if err := validateEndpoint(cfg.Endpoint); err != nil {
