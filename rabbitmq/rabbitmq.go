@@ -7,6 +7,8 @@ import (
 
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
+	"github.com/T-Prohmpossadhorn/go-core/otel"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Config defines RabbitMQ settings.
@@ -21,6 +23,7 @@ type RabbitMQ struct {
 	queues      map[string]chan []byte
 	otelEnabled bool
 	url         string
+	tracerName  string
 }
 
 // New creates a new RabbitMQ instance with the provided config.
@@ -34,6 +37,7 @@ func New(c *config.Config) (*RabbitMQ, error) {
 		queues:      make(map[string]chan []byte),
 		otelEnabled: cfg.OtelEnabled,
 		url:         cfg.URL,
+		tracerName:  "rabbitmq",
 	}
 	logger.Info("RabbitMQ initialized", logger.String("url", cfg.URL))
 	return rmq, nil
@@ -41,6 +45,11 @@ func New(c *config.Config) (*RabbitMQ, error) {
 
 // Publish sends a message to the specified queue.
 func (r *RabbitMQ) Publish(ctx context.Context, queue string, body []byte) error {
+	var span oteltrace.Span
+	if r.otelEnabled {
+		ctx, span = otel.StartSpan(ctx, r.tracerName, "Publish")
+		defer span.End()
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("publish canceled: %w", ctx.Err())
 	}
@@ -64,6 +73,12 @@ func (r *RabbitMQ) Publish(ctx context.Context, queue string, body []byte) error
 
 // Consume returns a channel to receive messages from the specified queue.
 func (r *RabbitMQ) Consume(ctx context.Context, queue string) (<-chan []byte, error) {
+	var span oteltrace.Span
+	if r.otelEnabled {
+		ctx, span = otel.StartSpan(ctx, r.tracerName, "Consume")
+		defer span.End()
+	}
+
 	r.mu.Lock()
 	q, ok := r.queues[queue]
 	if !ok {
