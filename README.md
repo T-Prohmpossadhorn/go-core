@@ -52,6 +52,25 @@ defer span.End()
 // ... perform work ...
 ```
 
+### rabbitmq
+
+An in-memory queue with a RabbitMQ-style API.
+
+**Example:**
+
+```go
+import (
+    "context"
+    "github.com/T-Prohmpossadhorn/go-core/config"
+    "github.com/T-Prohmpossadhorn/go-core/rabbitmq"
+)
+
+cfg, _ := config.New()
+rmq, _ := rabbitmq.New(cfg)
+defer rmq.Close()
+rmq.Publish(context.Background(), "q", []byte("hello"))
+```
+
 ---
 
 ## Testing
@@ -83,6 +102,8 @@ go-core/
 ├── config/         # Configuration loader
 ├── logger/         # Structured logging
 ├── otel/           # OpenTelemetry support
+├── httpc/          # HTTP server and client
+├── rabbitmq/       # In-memory message queue
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -112,3 +133,5 @@ T-Prohmpossadhorn
 - [config/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/config/README.md)
 - [logger/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/logger/README.md)
 - [otel/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/otel/README.md)
+- [httpc/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/httpc/README.md)
+- [rabbitmq/README.md](https://github.com/T-Prohmpossadhorn/go-core/blob/main/rabbitmq/README.md)
