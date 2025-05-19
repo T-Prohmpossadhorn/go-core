@@ -121,6 +121,10 @@ defer otel.Shutdown(context.Background())
 rmq, _ := rabbitmq.New(cfg)
 ctx := context.Background()
 _ = rmq.Publish(ctx, "tasks", []byte("traced message"))
+
+msgs, _ := rmq.Consume(context.Background(), "tasks")
+msg := <-msgs
+fmt.Println(string(msg))
 ```
 
 Logs produced by `Publish` and `Consume` will include `trace_id` and `span_id` fields when tracing is enabled.

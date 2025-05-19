@@ -118,6 +118,10 @@ defer otel.Shutdown(context.Background())
 k, _ := kafka.New(cfg)
 ctx := context.Background()
 _ = k.Publish(ctx, "tasks", []byte("traced"))
+
+msgs, _ := k.Consume(context.Background(), "tasks")
+msg := <-msgs
+fmt.Println(string(msg))
 ```
 
 With tracing enabled, log entries include `trace_id` and `span_id` so you can correlate events across services.

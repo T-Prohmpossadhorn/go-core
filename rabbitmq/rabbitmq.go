@@ -7,6 +7,9 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	otelglobal "go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
 	"github.com/T-Prohmpossadhorn/go-core/otel"
@@ -100,9 +103,19 @@ func (r *RabbitMQ) Publish(ctx context.Context, queue string, body []byte) error
 		return fmt.Errorf("declare queue: %w", err)
 	}
 
+	headers := amqp.Table{}
+	if r.otelEnabled {
+		carrier := propagation.MapCarrier{}
+		otelglobal.GetTextMapPropagator().Inject(ctx, carrier)
+		for k, v := range carrier {
+			headers[k] = v
+		}
+	}
+
 	err = r.channel.PublishWithContext(ctx, "", queue, false, false, amqp.Publishing{
 		ContentType: "application/octet-stream",
 		Body:        body,
+		Headers:     headers,
 	})
 	if err != nil {
 		return fmt.Errorf("publish message: %w", err)
@@ -133,6 +146,20 @@ func (r *RabbitMQ) Consume(ctx context.Context, queue string) (<-chan []byte, er
 	go func() {
 		defer close(out)
 		for d := range deliveries {
+			if r.otelEnabled {
+				carrier := propagation.MapCarrier{}
+				for k, v := range d.Headers {
+					switch val := v.(type) {
+					case string:
+						carrier[k] = val
+					case []byte:
+						carrier[k] = string(val)
+					}
+				}
+				msgCtx := otelglobal.GetTextMapPropagator().Extract(ctx, carrier)
+				_, span := otel.StartSpan(msgCtx, r.tracerName, "ConsumeMessage")
+				span.End()
+			}
 			out <- d.Body
 		}
 	}()
