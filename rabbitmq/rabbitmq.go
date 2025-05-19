@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -21,6 +22,8 @@ import (
 type Config struct {
 	OtelEnabled bool   `mapstructure:"otel_enabled" default:"false"`
 	URL         string `mapstructure:"rabbitmq_url" default:"amqp://guest:guest@localhost:5672/"`
+	EnableTLS   bool   `mapstructure:"rabbitmq_enable_tls" default:"false"`
+	AutoAck     bool   `mapstructure:"rabbitmq_auto_ack" default:"true"`
 }
 
 // RabbitMQ wraps a real RabbitMQ connection using the amqp091-go client.
@@ -56,6 +59,8 @@ type RabbitMQ struct {
 	channel     amqpChannel
 	otelEnabled bool
 	url         string
+	enableTLS   bool
+	autoAck     bool
 	tracerName  string
 }
 
@@ -64,6 +69,16 @@ func New(c *config.Config) (*RabbitMQ, error) {
 	cfg := Config{
 		OtelEnabled: c.GetBool("otel_enabled"),
 		URL:         c.GetStringWithDefault("rabbitmq_url", "amqp://guest:guest@localhost:5672/"),
+		EnableTLS:   c.GetBool("rabbitmq_enable_tls"),
+	}
+	autoAck := c.GetBool("rabbitmq_auto_ack")
+	if c.Get("rabbitmq_auto_ack") == nil {
+		autoAck = true
+	}
+	cfg.AutoAck = autoAck
+
+	if cfg.EnableTLS && strings.HasPrefix(cfg.URL, "amqp://") {
+		cfg.URL = "amqps://" + strings.TrimPrefix(cfg.URL, "amqp://")
 	}
 
 	conn, err := dialFunc(cfg.URL)
@@ -82,6 +97,8 @@ func New(c *config.Config) (*RabbitMQ, error) {
 		channel:     ch,
 		otelEnabled: cfg.OtelEnabled,
 		url:         cfg.URL,
+		enableTLS:   cfg.EnableTLS,
+		autoAck:     cfg.AutoAck,
 		tracerName:  "rabbitmq",
 	}
 	logger.Info("RabbitMQ initialized", logger.String("url", cfg.URL))
@@ -138,7 +155,7 @@ func (r *RabbitMQ) Consume(ctx context.Context, queue string) (<-chan []byte, er
 		return nil, fmt.Errorf("declare queue: %w", err)
 	}
 
-	deliveries, err := r.channel.ConsumeWithContext(ctx, queue, "", true, false, false, false, nil)
+	deliveries, err := r.channel.ConsumeWithContext(ctx, queue, "", r.autoAck, false, false, false, nil)
 	if err != nil {
 		return nil, fmt.Errorf("consume: %w", err)
 	}

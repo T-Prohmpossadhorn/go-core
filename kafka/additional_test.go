@@ -25,7 +25,7 @@ func (n *noWriter) Close() error                                             { r
 // TestPublishJSONMarshalError ensures PublishJSON returns marshal errors.
 func TestPublishJSONMarshalError(t *testing.T) {
 	origWriter := writerFactoryFunc
-	writerFactoryFunc = func([]string, string) writer { return &noWriter{} }
+	writerFactoryFunc = func([]string, string, Config) writer { return &noWriter{} }
 	defer func() { writerFactoryFunc = origWriter }()
 	cfg, _ := config.New()
 	k, _ := New(cfg)
@@ -38,7 +38,7 @@ func TestPublishJSONMarshalError(t *testing.T) {
 // TestConsumeReaderError verifies Consume stops on reader error.
 func TestConsumeReaderError(t *testing.T) {
 	origReader := readerFactoryFunc
-	readerFactoryFunc = func([]string, string) reader { return &errReader{} }
+	readerFactoryFunc = func([]string, string, Config) reader { return &errReader{} }
 	defer func() { readerFactoryFunc = origReader }()
 
 	cfg, _ := config.New()

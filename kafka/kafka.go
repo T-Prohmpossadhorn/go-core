@@ -2,12 +2,14 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	kafka_go "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
 
 	otelglobal "go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -23,6 +25,9 @@ type Config struct {
 	OtelEnabled bool   `mapstructure:"otel_enabled" default:"false"`
 	Brokers     string `mapstructure:"kafka_brokers" default:"localhost:9092"`
 	Topic       string `mapstructure:"kafka_topic" default:"default"`
+	EnableTLS   bool   `mapstructure:"kafka_enable_tls" default:"false"`
+	Username    string `mapstructure:"kafka_username" default:""`
+	Password    string `mapstructure:"kafka_password" default:""`
 }
 
 // Kafka wraps kafka-go writers and readers to talk to a real Kafka broker.
@@ -39,20 +44,42 @@ type reader interface {
 }
 
 // writerFactoryFunc creates a writer for a topic.
-var writerFactoryFunc = func(brokers []string, topic string) writer {
+var writerFactoryFunc = func(brokers []string, topic string, cfg Config) writer {
+	t := &kafka_go.Transport{}
+	if cfg.EnableTLS {
+		t.TLS = &tls.Config{}
+	}
+	if cfg.Username != "" || cfg.Password != "" {
+		t.SASL = plain.Mechanism{
+			Username: cfg.Username,
+			Password: cfg.Password,
+		}
+	}
 	return &kafka_go.Writer{
-		Addr:     kafka_go.TCP(brokers...),
-		Topic:    topic,
-		Balancer: &kafka_go.LeastBytes{},
+		Addr:      kafka_go.TCP(brokers...),
+		Topic:     topic,
+		Balancer:  &kafka_go.LeastBytes{},
+		Transport: t,
 	}
 }
 
 // readerFactoryFunc creates a reader for a topic.
-var readerFactoryFunc = func(brokers []string, topic string) reader {
+var readerFactoryFunc = func(brokers []string, topic string, cfg Config) reader {
+	dialer := &kafka_go.Dialer{}
+	if cfg.EnableTLS {
+		dialer.TLS = &tls.Config{}
+	}
+	if cfg.Username != "" || cfg.Password != "" {
+		dialer.SASLMechanism = plain.Mechanism{
+			Username: cfg.Username,
+			Password: cfg.Password,
+		}
+	}
 	return kafka_go.NewReader(kafka_go.ReaderConfig{
 		Brokers: brokers,
 		Topic:   topic,
 		GroupID: "",
+		Dialer:  dialer,
 	})
 }
 
@@ -72,6 +99,9 @@ func New(c *config.Config) (*Kafka, error) {
 		OtelEnabled: c.GetBool("otel_enabled"),
 		Brokers:     c.GetStringWithDefault("kafka_brokers", "localhost:9092"),
 		Topic:       c.GetStringWithDefault("kafka_topic", "default"),
+		EnableTLS:   c.GetBool("kafka_enable_tls"),
+		Username:    c.GetStringWithDefault("kafka_username", ""),
+		Password:    c.GetStringWithDefault("kafka_password", ""),
 	}
 
 	brokers := strings.Split(cfg.Brokers, ",")
@@ -100,7 +130,7 @@ func (k *Kafka) Publish(ctx context.Context, topic string, body []byte) error {
 	k.mu.Lock()
 	w, ok := k.writers[topic]
 	if !ok {
-		w = writerFactoryFunc(k.brokers, topic)
+		w = writerFactoryFunc(k.brokers, topic, k.cfg)
 		k.writers[topic] = w
 	}
 	k.mu.Unlock()
@@ -134,7 +164,7 @@ func (k *Kafka) Consume(ctx context.Context, topic string) (<-chan []byte, error
 	k.mu.Lock()
 	r, ok := k.readers[topic]
 	if !ok {
-		r = readerFactoryFunc(k.brokers, topic)
+		r = readerFactoryFunc(k.brokers, topic, k.cfg)
 		k.readers[topic] = r
 	}
 	k.mu.Unlock()
