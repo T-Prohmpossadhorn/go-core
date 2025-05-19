@@ -20,10 +20,36 @@ type Config struct {
 }
 
 // RabbitMQ wraps a real RabbitMQ connection using the amqp091-go client.
+type amqpChannel interface {
+	QueueDeclare(name string, durable, autoDelete, exclusive, noWait bool, args amqp.Table) (amqp.Queue, error)
+	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	ConsumeWithContext(ctx context.Context, queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error)
+	Close() error
+}
+
+type amqpConn interface {
+	Channel() (amqpChannel, error)
+	Close() error
+}
+
+type realConn struct{ *amqp.Connection }
+
+func (rc *realConn) Channel() (amqpChannel, error) { return rc.Connection.Channel() }
+func (rc *realConn) Close() error                  { return rc.Connection.Close() }
+
+var dialFunc = func(url string) (amqpConn, error) {
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return nil, err
+	}
+	return &realConn{conn}, nil
+}
+
+// RabbitMQ wraps a real RabbitMQ connection using the amqp091-go client.
 type RabbitMQ struct {
 	mu          sync.RWMutex
-	conn        *amqp.Connection
-	channel     *amqp.Channel
+	conn        amqpConn
+	channel     amqpChannel
 	otelEnabled bool
 	url         string
 	tracerName  string
@@ -36,7 +62,7 @@ func New(c *config.Config) (*RabbitMQ, error) {
 		URL:         c.GetStringWithDefault("rabbitmq_url", "amqp://guest:guest@localhost:5672/"),
 	}
 
-	conn, err := amqp.Dial(cfg.URL)
+	conn, err := dialFunc(cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("connect rabbitmq: %w", err)
 	}
