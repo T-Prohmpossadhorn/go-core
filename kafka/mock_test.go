@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -163,4 +164,118 @@ func TestKafkaPublishInjectsTraceContext(t *testing.T) {
 		}
 	}
 	require.True(t, found, "traceparent header not found")
+}
+
+// errWriter returns error on write
+type errWriter struct{}
+
+func (e *errWriter) WriteMessages(ctx context.Context, msgs ...kafka_go.Message) error {
+	return fmt.Errorf("write fail")
+}
+func (e *errWriter) Close() error { return nil }
+
+// countWriter tracks Close calls
+type countWriter struct{ closed int }
+
+func (c *countWriter) WriteMessages(ctx context.Context, msgs ...kafka_go.Message) error { return nil }
+func (c *countWriter) Close() error                                                      { c.closed++; return nil }
+
+// countReader tracks Close calls and provides messages
+type countReader struct {
+	ch     chan kafka_go.Message
+	closed int
+}
+
+func (c *countReader) ReadMessage(ctx context.Context) (kafka_go.Message, error) {
+	msg, ok := <-c.ch
+	if !ok {
+		return kafka_go.Message{}, io.EOF
+	}
+	return msg, nil
+}
+func (c *countReader) Close() error { c.closed++; return nil }
+
+func TestKafkaPublishWriteError(t *testing.T) {
+	ew := &errWriter{}
+	origW := writerFactoryFunc
+	writerFactoryFunc = func([]string, string, Config) writer { return ew }
+	defer func() { writerFactoryFunc = origW }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
+	k, err := New(cfg)
+	require.NoError(t, err)
+
+	err = k.Publish(context.Background(), "t1", []byte("x"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "write fail")
+}
+
+func TestKafkaConsumeTracingMock(t *testing.T) {
+	mw := &mockWriter{}
+	mr := &mockReader{ch: make(chan kafka_go.Message, 1)}
+	mr.ch <- kafka_go.Message{Value: []byte("traced")}
+	close(mr.ch)
+
+	origW, origR := writerFactoryFunc, readerFactoryFunc
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
+	readerFactoryFunc = func([]string, string, Config) reader { return mr }
+	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{
+		"otel_enabled": true,
+	}))
+	os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
+	defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+	require.NoError(t, otel.Init(cfg))
+	defer otel.Shutdown(context.Background())
+
+	k, err := New(cfg)
+	require.NoError(t, err)
+
+	out, err := k.Consume(context.Background(), "t1")
+	require.NoError(t, err)
+	msg := <-out
+	require.Equal(t, []byte("traced"), msg)
+}
+
+func TestConsumeJSONUnmarshalError(t *testing.T) {
+	mw := &mockWriter{}
+	mr := &mockReader{ch: make(chan kafka_go.Message, 1)}
+	mr.ch <- kafka_go.Message{Value: []byte("{notjson")}
+	close(mr.ch)
+
+	origW, origR := writerFactoryFunc, readerFactoryFunc
+	writerFactoryFunc = func([]string, string, Config) writer { return mw }
+	readerFactoryFunc = func([]string, string, Config) reader { return mr }
+	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
+	k, err := New(cfg)
+	require.NoError(t, err)
+
+	out, err := ConsumeJSON[map[string]string](context.Background(), k, "t1")
+	require.NoError(t, err)
+	_, ok := <-out
+	require.False(t, ok)
+}
+
+func TestKafkaCloseCallsClose(t *testing.T) {
+	cw := &countWriter{}
+	cr := &countReader{ch: make(chan kafka_go.Message)}
+	origW, origR := writerFactoryFunc, readerFactoryFunc
+	writerFactoryFunc = func([]string, string, Config) writer { return cw }
+	readerFactoryFunc = func([]string, string, Config) reader { return cr }
+	defer func() { writerFactoryFunc, readerFactoryFunc = origW, origR }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
+	k, err := New(cfg)
+	require.NoError(t, err)
+
+	_, err = k.Consume(context.Background(), "t1")
+	require.NoError(t, err)
+	require.NoError(t, k.Publish(context.Background(), "t1", []byte("x")))
+
+	require.NoError(t, k.Close())
+	require.Equal(t, 1, cw.closed)
+	require.Equal(t, 1, cr.closed)
 }
