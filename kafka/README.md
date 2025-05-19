@@ -44,7 +44,7 @@ go get github.com/T-Prohmpossadhorn/go-core/otel
 ```
 
 ## Usage
-Create a new instance with `New`, publish messages with `Publish`, and consume them with `Consume`.
+Create a new instance with `New`. You can publish messages with either `Publish`/`Consume` using raw bytes or use `PublishJSON`/`ConsumeJSON` to work with structs directly.
 
 ### Producing Messages
 
@@ -69,7 +69,11 @@ func main() {
     k, _ := kafka.New(cfg)
     defer k.Close()
 
-    _ = k.Publish(context.Background(), "tasks", []byte("hello"))
+    type Task struct {
+        Name string `json:"name"`
+    }
+
+    _ = kafka.PublishJSON(context.Background(), k, "tasks", Task{Name: "hello"})
 }
 ```
 
@@ -95,9 +99,13 @@ func main() {
     k, _ := kafka.New(cfg)
     defer k.Close()
 
-    msgs, _ := k.Consume(context.Background(), "tasks")
+    type Task struct {
+        Name string `json:"name"`
+    }
+
+    msgs, _ := kafka.ConsumeJSON[Task](context.Background(), k, "tasks")
     for msg := range msgs {
-        fmt.Println(string(msg))
+        fmt.Println(msg.Name)
     }
 }
 ```
@@ -117,11 +125,15 @@ defer otel.Shutdown(context.Background())
 
 k, _ := kafka.New(cfg)
 ctx := context.Background()
-_ = k.Publish(ctx, "tasks", []byte("traced"))
+type Task struct {
+    Name string `json:"name"`
+}
 
-msgs, _ := k.Consume(context.Background(), "tasks")
+_ = kafka.PublishJSON(ctx, k, "tasks", Task{Name: "traced"})
+
+msgs, _ := kafka.ConsumeJSON[Task](context.Background(), k, "tasks")
 msg := <-msgs
-fmt.Println(string(msg))
+fmt.Println(msg.Name)
 ```
 
 With tracing enabled, log entries include `trace_id` and `span_id` so you can correlate events across services.
