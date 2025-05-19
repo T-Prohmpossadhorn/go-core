@@ -28,7 +28,10 @@ func main() {
 	defer rmq.Close()
 
 	ctx, span := otel.StartSpan(context.Background(), "rabbitmq-example", "publish")
-	defer span.End()
-
 	_ = rmq.Publish(ctx, "tasks", []byte("hello"))
+	span.End()
+
+	msgs, _ := rmq.Consume(context.Background(), "tasks")
+	msg := <-msgs
+	logger.InfoContext(ctx, "consumed", logger.String("msg", string(msg)))
 }

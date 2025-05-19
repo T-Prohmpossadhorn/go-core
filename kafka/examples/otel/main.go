@@ -28,7 +28,10 @@ func main() {
 	defer k.Close()
 
 	ctx, span := otel.StartSpan(context.Background(), "kafka-example", "publish")
-	defer span.End()
-
 	_ = k.Publish(ctx, "tasks", []byte("hello"))
+	span.End()
+
+	msgs, _ := k.Consume(context.Background(), "tasks")
+	msg := <-msgs
+	logger.InfoContext(ctx, "consumed", logger.String("msg", string(msg)))
 }
