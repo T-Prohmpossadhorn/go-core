@@ -3,6 +3,7 @@ package kafka
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"sync"
 	"testing"
@@ -72,24 +73,45 @@ func resetLogs(writer *syncWriter) {
 	writer.buf.Reset()
 }
 
-func TestPublishConsume(t *testing.T) {
-	cfg, err := config.New(config.WithDefault(map[string]interface{}{}))
+func newKafkaForTest(t *testing.T) *Kafka {
+	brokers := os.Getenv("KAFKA_BROKERS")
+	if brokers == "" {
+		brokers = "localhost:9092"
+	}
+	cfg, err := config.New(config.WithDefault(map[string]interface{}{
+		"kafka_brokers": brokers,
+	}))
 	require.NoError(t, err)
 	k, err := New(cfg)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skipf("Kafka not available: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", brokers, time.Second)
+	if err != nil {
+		t.Skipf("Kafka broker not reachable: %v", err)
+	}
+	_ = conn.Close()
+	return k
+}
+
+func TestPublishConsume(t *testing.T) {
+	k := newKafkaForTest(t)
 	defer k.Close()
 
 	ctx := context.Background()
-	require.NoError(t, k.Publish(ctx, "q", []byte("hi")))
 	msgs, err := k.Consume(ctx, "q")
 	require.NoError(t, err)
-	msg := <-msgs
-	require.Equal(t, []byte("hi"), msg)
+	require.NoError(t, k.Publish(ctx, "q", []byte("hi")))
+	select {
+	case msg := <-msgs:
+		require.Equal(t, []byte("hi"), msg)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for message")
+	}
 }
 
 func TestPublishCanceled(t *testing.T) {
-	cfg, _ := config.New()
-	k, _ := New(cfg)
+	k := newKafkaForTest(t)
 	defer k.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,8 +135,7 @@ func TestPublishTracing(t *testing.T) {
 	require.NoError(t, otel.Init(cfg))
 	defer otel.Shutdown(context.Background())
 
-	k, err := New(cfg)
-	require.NoError(t, err)
+	k := newKafkaForTest(t)
 	defer k.Close()
 
 	ctx := context.Background()

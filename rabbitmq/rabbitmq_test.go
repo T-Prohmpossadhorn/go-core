@@ -72,24 +72,40 @@ func resetLogs(writer *syncWriter) {
 	writer.buf.Reset()
 }
 
-func TestPublishConsume(t *testing.T) {
-	cfg, err := config.New(config.WithDefault(map[string]interface{}{}))
+func newRabbitMQForTest(t *testing.T) *RabbitMQ {
+	url := os.Getenv("RABBITMQ_URL")
+	if url == "" {
+		url = "amqp://guest:guest@localhost:5672/"
+	}
+	cfg, err := config.New(config.WithDefault(map[string]interface{}{
+		"rabbitmq_url": url,
+	}))
 	require.NoError(t, err)
 	rmq, err := New(cfg)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skipf("RabbitMQ not available: %v", err)
+	}
+	return rmq
+}
+
+func TestPublishConsume(t *testing.T) {
+	rmq := newRabbitMQForTest(t)
 	defer rmq.Close()
 
 	ctx := context.Background()
-	require.NoError(t, rmq.Publish(ctx, "q", []byte("hi")))
 	msgs, err := rmq.Consume(ctx, "q")
 	require.NoError(t, err)
-	msg := <-msgs
-	require.Equal(t, []byte("hi"), msg)
+	require.NoError(t, rmq.Publish(ctx, "q", []byte("hi")))
+	select {
+	case msg := <-msgs:
+		require.Equal(t, []byte("hi"), msg)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for message")
+	}
 }
 
 func TestPublishCanceled(t *testing.T) {
-	cfg, _ := config.New()
-	rmq, _ := New(cfg)
+	rmq := newRabbitMQForTest(t)
 	defer rmq.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,8 +129,7 @@ func TestPublishTracing(t *testing.T) {
 	require.NoError(t, otel.Init(cfg))
 	defer otel.Shutdown(context.Background())
 
-	rmq, err := New(cfg)
-	require.NoError(t, err)
+	rmq := newRabbitMQForTest(t)
 	defer rmq.Close()
 
 	ctx := context.Background()

@@ -1,6 +1,6 @@
 # kafka Package
 
-The `kafka` package implements an in-memory message queue with an API reminiscent of Apache Kafka. It integrates with the `config`, `logger`, and `otel` packages in this monorepo and is intended for development or testing scenarios where a real Kafka broker would be overkill.
+The `kafka` package wraps [kafka-go](https://github.com/segmentio/kafka-go) to communicate with a real Kafka broker. It integrates with the `config`, `logger`, and `otel` packages in this monorepo.
 
 ## Table of Contents
 - [Features](#features)
@@ -17,12 +17,11 @@ The `kafka` package implements an in-memory message queue with an API reminiscen
 - [License](#license)
 
 ## Features
-- **In-Memory Topics**: No external Kafka broker required.
+- **Kafka Client**: Sends and receives messages using real Kafka brokers.
 - **Config Integration**: Load `kafka_brokers`, `kafka_topic`, and `otel_enabled` using the `config` package.
 - **Structured Logging**: `logger` provides context-aware logs.
 - **OpenTelemetry Support**: When enabled, operations create spans with the `otel` package.
-- **Thread-Safe**: Uses `sync.RWMutex` for safe concurrent access to topics.
-- **Graceful Shutdown**: Close all topics and release resources with `Close()`.
+- **Graceful Shutdown**: Close all writers and readers with `Close()`.
 
 ## Installation
 Install the package:

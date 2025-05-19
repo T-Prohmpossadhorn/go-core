@@ -3,7 +3,10 @@ package kafka
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+
+	kafka_go "github.com/segmentio/kafka-go"
 
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
@@ -18,10 +21,12 @@ type Config struct {
 	Topic       string `mapstructure:"kafka_topic" default:"default"`
 }
 
-// Kafka is an in-memory message queue used for demonstration.
+// Kafka wraps kafka-go writers and readers to talk to a real Kafka broker.
 type Kafka struct {
 	mu         sync.RWMutex
-	topics     map[string]chan []byte
+	writers    map[string]*kafka_go.Writer
+	readers    map[string]*kafka_go.Reader
+	brokers    []string
 	cfg        Config
 	tracerName string
 }
@@ -34,8 +39,11 @@ func New(c *config.Config) (*Kafka, error) {
 		Topic:       c.GetStringWithDefault("kafka_topic", "default"),
 	}
 
+	brokers := strings.Split(cfg.Brokers, ",")
 	k := &Kafka{
-		topics:     make(map[string]chan []byte),
+		writers:    make(map[string]*kafka_go.Writer),
+		readers:    make(map[string]*kafka_go.Reader),
+		brokers:    brokers,
 		cfg:        cfg,
 		tracerName: "kafka",
 	}
@@ -55,20 +63,23 @@ func (k *Kafka) Publish(ctx context.Context, topic string, body []byte) error {
 	}
 
 	k.mu.Lock()
-	q, ok := k.topics[topic]
+	w, ok := k.writers[topic]
 	if !ok {
-		q = make(chan []byte, 100)
-		k.topics[topic] = q
+		w = &kafka_go.Writer{
+			Addr:     kafka_go.TCP(k.brokers...),
+			Topic:    topic,
+			Balancer: &kafka_go.LeastBytes{},
+		}
+		k.writers[topic] = w
 	}
 	k.mu.Unlock()
 
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("publish canceled: %w", ctx.Err())
-	case q <- body:
-		logger.InfoContext(ctx, "Message published", logger.String("topic", topic))
-		return nil
+	err := w.WriteMessages(ctx, kafka_go.Message{Value: body})
+	if err != nil {
+		return fmt.Errorf("write message: %w", err)
 	}
+	logger.InfoContext(ctx, "Message published", logger.String("topic", topic))
+	return nil
 }
 
 // Consume returns a channel to receive messages from the specified topic.
@@ -80,10 +91,14 @@ func (k *Kafka) Consume(ctx context.Context, topic string) (<-chan []byte, error
 	}
 
 	k.mu.Lock()
-	q, ok := k.topics[topic]
+	r, ok := k.readers[topic]
 	if !ok {
-		q = make(chan []byte, 100)
-		k.topics[topic] = q
+		r = kafka_go.NewReader(kafka_go.ReaderConfig{
+			Brokers: k.brokers,
+			Topic:   topic,
+			GroupID: "",
+		})
+		k.readers[topic] = r
 	}
 	k.mu.Unlock()
 
@@ -91,26 +106,29 @@ func (k *Kafka) Consume(ctx context.Context, topic string) (<-chan []byte, error
 	go func() {
 		defer close(out)
 		for {
-			select {
-			case msg := <-q:
-				out <- msg
-			case <-ctx.Done():
+			m, err := r.ReadMessage(ctx)
+			if err != nil {
 				return
 			}
+			out <- m.Value
 		}
 	}()
 	logger.InfoContext(ctx, "Consumer registered", logger.String("topic", topic))
 	return out, nil
 }
 
-// Close closes all topics.
+// Close shuts down all readers and writers.
 func (k *Kafka) Close() error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	for name, ch := range k.topics {
-		close(ch)
-		delete(k.topics, name)
+	for _, w := range k.writers {
+		_ = w.Close()
 	}
+	for _, r := range k.readers {
+		_ = r.Close()
+	}
+	k.writers = map[string]*kafka_go.Writer{}
+	k.readers = map[string]*kafka_go.Reader{}
 	logger.Info("Kafka closed")
 	return nil
 }
