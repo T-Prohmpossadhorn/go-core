@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	amqp "github.com/rabbitmq/amqp091-go"
+
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
 	"github.com/T-Prohmpossadhorn/go-core/otel"
@@ -17,10 +19,11 @@ type Config struct {
 	URL         string `mapstructure:"rabbitmq_url" default:"amqp://guest:guest@localhost:5672/"`
 }
 
-// RabbitMQ is an in-memory message queue used for demonstration.
+// RabbitMQ wraps a real RabbitMQ connection using the amqp091-go client.
 type RabbitMQ struct {
 	mu          sync.RWMutex
-	queues      map[string]chan []byte
+	conn        *amqp.Connection
+	channel     *amqp.Channel
 	otelEnabled bool
 	url         string
 	tracerName  string
@@ -33,8 +36,20 @@ func New(c *config.Config) (*RabbitMQ, error) {
 		URL:         c.GetStringWithDefault("rabbitmq_url", "amqp://guest:guest@localhost:5672/"),
 	}
 
+	conn, err := amqp.Dial(cfg.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connect rabbitmq: %w", err)
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open channel: %w", err)
+	}
+
 	rmq := &RabbitMQ{
-		queues:      make(map[string]chan []byte),
+		conn:        conn,
+		channel:     ch,
 		otelEnabled: cfg.OtelEnabled,
 		url:         cfg.URL,
 		tracerName:  "rabbitmq",
@@ -54,21 +69,20 @@ func (r *RabbitMQ) Publish(ctx context.Context, queue string, body []byte) error
 		return fmt.Errorf("publish canceled: %w", ctx.Err())
 	}
 
-	r.mu.Lock()
-	q, ok := r.queues[queue]
-	if !ok {
-		q = make(chan []byte, 100)
-		r.queues[queue] = q
+	_, err := r.channel.QueueDeclare(queue, true, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("declare queue: %w", err)
 	}
-	r.mu.Unlock()
 
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("publish canceled: %w", ctx.Err())
-	case q <- body:
-		logger.InfoContext(ctx, "Message published", logger.String("queue", queue))
-		return nil
+	err = r.channel.PublishWithContext(ctx, "", queue, false, false, amqp.Publishing{
+		ContentType: "application/octet-stream",
+		Body:        body,
+	})
+	if err != nil {
+		return fmt.Errorf("publish message: %w", err)
 	}
+	logger.InfoContext(ctx, "Message published", logger.String("queue", queue))
+	return nil
 }
 
 // Consume returns a channel to receive messages from the specified queue.
@@ -79,37 +93,36 @@ func (r *RabbitMQ) Consume(ctx context.Context, queue string) (<-chan []byte, er
 		defer span.End()
 	}
 
-	r.mu.Lock()
-	q, ok := r.queues[queue]
-	if !ok {
-		q = make(chan []byte, 100)
-		r.queues[queue] = q
+	_, err := r.channel.QueueDeclare(queue, true, false, false, false, nil)
+	if err != nil {
+		return nil, fmt.Errorf("declare queue: %w", err)
 	}
-	r.mu.Unlock()
+
+	deliveries, err := r.channel.ConsumeWithContext(ctx, queue, "", true, false, false, false, nil)
+	if err != nil {
+		return nil, fmt.Errorf("consume: %w", err)
+	}
 
 	out := make(chan []byte)
 	go func() {
 		defer close(out)
-		for {
-			select {
-			case msg := <-q:
-				out <- msg
-			case <-ctx.Done():
-				return
-			}
+		for d := range deliveries {
+			out <- d.Body
 		}
 	}()
 	logger.InfoContext(ctx, "Consumer registered", logger.String("queue", queue))
 	return out, nil
 }
 
-// Close closes all queues.
+// Close shuts down the channel and connection.
 func (r *RabbitMQ) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for name, ch := range r.queues {
-		close(ch)
-		delete(r.queues, name)
+	if r.channel != nil {
+		_ = r.channel.Close()
+	}
+	if r.conn != nil {
+		_ = r.conn.Close()
 	}
 	logger.Info("RabbitMQ closed")
 	return nil

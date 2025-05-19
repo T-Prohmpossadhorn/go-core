@@ -54,7 +54,7 @@ defer span.End()
 
 ### rabbitmq
 
-An in-memory queue with a RabbitMQ-style API.
+A wrapper around RabbitMQ using the official Go client.
 
 **Example:**
 
@@ -73,7 +73,7 @@ rmq.Publish(context.Background(), "q", []byte("hello"))
 
 ### kafka
 
-An in-memory queue with a Kafka-style API.
+A wrapper around Kafka using the kafka-go library.
 
 **Example:**
 

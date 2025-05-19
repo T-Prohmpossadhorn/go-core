@@ -1,6 +1,6 @@
 # rabbitmq Package
 
-The `rabbitmq` package is a lightweight, in-memory message queue inspired by RabbitMQ. It provides simple APIs for publishing and consuming messages while integrating with the `config`, `logger`, and `otel` packages from this monorepo. This package is ideal for local testing or demonstrations where a real RabbitMQ broker is unnecessary.
+The `rabbitmq` package is a thin wrapper around the official [amqp091-go](https://github.com/rabbitmq/amqp091-go) client. It exposes simple APIs for publishing and consuming messages while integrating with the `config`, `logger`, and `otel` packages from this monorepo.
 
 ## Table of Contents
 - [Features](#features)
@@ -17,12 +17,11 @@ The `rabbitmq` package is a lightweight, in-memory message queue inspired by Rab
 - [License](#license)
 
 ## Features
-- **In-Memory Queues**: Publish and consume messages without an external broker.
+- **RabbitMQ Client**: Publishes and consumes messages using the real RabbitMQ protocol.
 - **Config Integration**: Uses the `config` package to load settings such as `rabbitmq_url` and `otel_enabled`.
 - **Structured Logging**: Leverages the `logger` package for contextual logs that include trace information.
 - **OpenTelemetry Support**: When `otel_enabled` is `true`, operations create spans using the `otel` package.
-- **Thread-Safe**: Protects queue access with `sync.RWMutex` for safe concurrent use.
-- **Graceful Shutdown**: Close all queues with `Close()` to clean up resources.
+- **Graceful Shutdown**: Close the connection with `Close()` to clean up resources.
 
 ## Installation
 Install the package using `go get`:
