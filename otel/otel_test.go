@@ -19,6 +19,15 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
+// TestMain sets up global test configuration.
+func TestMain(m *testing.M) {
+	// Use the mock exporter to avoid network calls during tests.
+	os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
+	code := m.Run()
+	os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+	os.Exit(code)
+}
+
 // syncWriter is a thread-safe writer for capturing logs
 type syncWriter struct {
 	buf *bytes.Buffer
@@ -42,7 +51,7 @@ func setupLogger(t *testing.T) (*syncWriter, *os.File, func()) {
 	os.Stdout = w
 	go func() {
 		_, _ = logBuf.ReadFrom(r)
-		time.Sleep(200 * time.Millisecond) // Ensure all logs are read
+		time.Sleep(10 * time.Millisecond) // Ensure all logs are read
 		r.Close()
 	}()
 	err = logger.InitWithConfig(logger.LoggerConfig{
@@ -55,7 +64,7 @@ func setupLogger(t *testing.T) (*syncWriter, *os.File, func()) {
 	}
 	return logWriter, w, func() {
 		logger.Sync()
-		time.Sleep(200 * time.Millisecond) // Ensure logs are flushed
+		time.Sleep(10 * time.Millisecond) // Ensure logs are flushed
 		w.Close()
 		os.Stdout = originalStdout
 	}
@@ -63,7 +72,7 @@ func setupLogger(t *testing.T) (*syncWriter, *os.File, func()) {
 
 func getLogs(writer *syncWriter) string {
 	logger.Sync()
-	time.Sleep(200 * time.Millisecond) // Ensure logs are flushed
+	time.Sleep(10 * time.Millisecond) // Ensure logs are flushed
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	logs := writer.buf.String()
@@ -72,7 +81,7 @@ func getLogs(writer *syncWriter) string {
 
 func resetLogs(writer *syncWriter) {
 	logger.Sync()
-	time.Sleep(200 * time.Millisecond) // Ensure logs are flushed
+	time.Sleep(10 * time.Millisecond) // Ensure logs are flushed
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	writer.buf.Reset()
@@ -550,6 +559,10 @@ func TestOTel(t *testing.T) {
 			defer cleanup()
 			resetLogs(logWriter)
 
+			// Disable mock exporter to test OTLP failure path
+			os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+			defer os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
+
 			os.Setenv("OTEL_TEST_OTLP_FAIL", "true")
 			defer os.Unsetenv("OTEL_TEST_OTLP_FAIL")
 
@@ -760,8 +773,9 @@ func TestOTel(t *testing.T) {
 			os.Unsetenv("OTEL_TEST_SHUTDOWN_TIMEOUT")
 			os.Unsetenv("OTEL_TEST_OTLP_FAIL")
 			os.Unsetenv("OTEL_TEST_STDOUT_FAIL")
+			originalMock := os.Getenv("OTEL_TEST_MOCK_EXPORTER")
 			os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
-			defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+			defer os.Setenv("OTEL_TEST_MOCK_EXPORTER", originalMock)
 			otelMu.Lock()
 			tracerProvider = nil
 			otelMu.Unlock()
@@ -783,7 +797,7 @@ func TestOTel(t *testing.T) {
 					break
 				}
 				otelMu.RUnlock()
-				time.Sleep(5 * time.Millisecond)
+				time.Sleep(1 * time.Millisecond)
 			}
 
 			for i := 0; i < numGoroutines; i++ {
