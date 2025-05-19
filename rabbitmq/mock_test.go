@@ -264,3 +264,24 @@ func TestRabbitMQPublishInjectsTraceContext(t *testing.T) {
 	_, found := ch.published[0].Headers["traceparent"]
 	require.True(t, found, "traceparent header not found")
 }
+
+func TestRabbitMQConsumeJSONInvalidDataMock(t *testing.T) {
+	ch := &mockChannel{consumeCh: make(chan amqp.Delivery, 1)}
+	ch.consumeCh <- amqp.Delivery{Body: []byte("notjson")}
+	close(ch.consumeCh)
+
+	origDial := dialFunc
+	dialFunc = func(string) (amqpConn, error) { return &mockConn{ch: ch}, nil }
+	defer func() { dialFunc = origDial }()
+
+	cfg, _ := config.New(config.WithDefault(map[string]interface{}{}))
+	rmq, err := New(cfg)
+	require.NoError(t, err)
+
+	out, err := ConsumeJSON[map[string]string](context.Background(), rmq, "q1")
+	require.NoError(t, err)
+
+	// No panic or send due to invalid JSON
+	_, ok := <-out
+	require.False(t, ok)
+}
