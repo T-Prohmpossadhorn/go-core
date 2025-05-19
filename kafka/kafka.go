@@ -7,6 +7,8 @@ import (
 
 	"github.com/T-Prohmpossadhorn/go-core/config"
 	"github.com/T-Prohmpossadhorn/go-core/logger"
+	"github.com/T-Prohmpossadhorn/go-core/otel"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Config defines Kafka settings.
@@ -18,9 +20,10 @@ type Config struct {
 
 // Kafka is an in-memory message queue used for demonstration.
 type Kafka struct {
-	mu     sync.RWMutex
-	topics map[string]chan []byte
-	cfg    Config
+	mu         sync.RWMutex
+	topics     map[string]chan []byte
+	cfg        Config
+	tracerName string
 }
 
 // New creates a new Kafka instance with the provided config.
@@ -32,8 +35,9 @@ func New(c *config.Config) (*Kafka, error) {
 	}
 
 	k := &Kafka{
-		topics: make(map[string]chan []byte),
-		cfg:    cfg,
+		topics:     make(map[string]chan []byte),
+		cfg:        cfg,
+		tracerName: "kafka",
 	}
 	logger.Info("Kafka initialized", logger.String("brokers", cfg.Brokers), logger.String("topic", cfg.Topic))
 	return k, nil
@@ -41,6 +45,11 @@ func New(c *config.Config) (*Kafka, error) {
 
 // Publish sends a message to the specified topic.
 func (k *Kafka) Publish(ctx context.Context, topic string, body []byte) error {
+	var span oteltrace.Span
+	if k.cfg.OtelEnabled {
+		ctx, span = otel.StartSpan(ctx, k.tracerName, "Publish")
+		defer span.End()
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("publish canceled: %w", ctx.Err())
 	}
@@ -64,6 +73,12 @@ func (k *Kafka) Publish(ctx context.Context, topic string, body []byte) error {
 
 // Consume returns a channel to receive messages from the specified topic.
 func (k *Kafka) Consume(ctx context.Context, topic string) (<-chan []byte, error) {
+	var span oteltrace.Span
+	if k.cfg.OtelEnabled {
+		ctx, span = otel.StartSpan(ctx, k.tracerName, "Consume")
+		defer span.End()
+	}
+
 	k.mu.Lock()
 	q, ok := k.topics[topic]
 	if !ok {

@@ -1,63 +1,169 @@
 # rabbitmq Package
 
-The `rabbitmq` package provides a lightweight, in-memory message queue with an API inspired by RabbitMQ. It mirrors the style of the `httpc` package, integrating with `config` and `logger` for easy configuration and structured logging. This implementation does **not** connect to an actual RabbitMQ server; it is a simple, thread-safe queue useful for local testing or demonstration purposes.
+The `rabbitmq` package is a lightweight, in-memory message queue inspired by RabbitMQ. It provides simple APIs for publishing and consuming messages while integrating with the `config`, `logger`, and `otel` packages from this monorepo. This package is ideal for local testing or demonstrations where a real RabbitMQ broker is unnecessary.
 
 ## Table of Contents
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
-  - [Publishing Messages](#publishing-messages)
-  - [Consuming Messages](#consuming-messages)
+  - [Basic Publishing](#basic-publishing)
+  - [Basic Consuming](#basic-consuming)
+  - [Tracing with OpenTelemetry](#tracing-with-opentelemetry)
 - [Configuration](#configuration)
 - [Examples](#examples)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Features
-- **In-Memory Queues**: Send and receive messages without an external broker.
+- **In-Memory Queues**: Publish and consume messages without an external broker.
 - **Config Integration**: Uses the `config` package to load settings such as `rabbitmq_url` and `otel_enabled`.
-- **Structured Logging**: Leverages the `logger` package for contextual logs.
-- **Optional Tracing**: Placeholder field for OpenTelemetry support.
-- **Graceful Shutdown**: Close all queues with `Close()`.
+- **Structured Logging**: Leverages the `logger` package for contextual logs that include trace information.
+- **OpenTelemetry Support**: When `otel_enabled` is `true`, operations create spans using the `otel` package.
+- **Thread-Safe**: Protects queue access with `sync.RWMutex` for safe concurrent use.
+- **Graceful Shutdown**: Close all queues with `Close()` to clean up resources.
 
 ## Installation
+Install the package using `go get`:
+
 ```bash
 go get github.com/T-Prohmpossadhorn/go-core/rabbitmq
 ```
 
+### Dependencies
+- `github.com/T-Prohmpossadhorn/go-core/config`
+- `github.com/T-Prohmpossadhorn/go-core/logger`
+- `github.com/T-Prohmpossadhorn/go-core/otel`
+
+Add them to your `go.mod` if they are not already present:
+
+```bash
+go get github.com/T-Prohmpossadhorn/go-core/config
+go get github.com/T-Prohmpossadhorn/go-core/logger
+go get github.com/T-Prohmpossadhorn/go-core/otel
+```
+
 ## Usage
-### Publishing Messages
+The package exposes `New`, `Publish`, `Consume`, and `Close` functions. Below are common scenarios.
+
+### Basic Publishing
+Create a queue and publish a message:
+
 ```go
-cfg, _ := config.New(config.WithDefault(map[string]interface{}{
-    "rabbitmq_url": "amqp://guest:guest@localhost:5672/",
-}))
-rmq, _ := rabbitmq.New(cfg)
-ctx := context.Background()
-if err := rmq.Publish(ctx, "tasks", []byte("hello")); err != nil {
-    panic(err)
+package main
+
+import (
+    "context"
+
+    "github.com/T-Prohmpossadhorn/go-core/config"
+    "github.com/T-Prohmpossadhorn/go-core/logger"
+    "github.com/T-Prohmpossadhorn/go-core/rabbitmq"
+)
+
+func main() {
+    logger.Init()
+    defer logger.Sync()
+
+    cfg, _ := config.New(config.WithDefault(map[string]interface{}{
+        "rabbitmq_url": "amqp://guest:guest@localhost:5672/",
+    }))
+    rmq, _ := rabbitmq.New(cfg)
+    defer rmq.Close()
+
+    _ = rmq.Publish(context.Background(), "tasks", []byte("hello"))
 }
 ```
 
-### Consuming Messages
+### Basic Consuming
+Consume messages from a queue:
+
 ```go
-ctx := context.Background()
-msgs, _ := rmq.Consume(ctx, "tasks")
-for msg := range msgs {
-    fmt.Println(string(msg))
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/T-Prohmpossadhorn/go-core/config"
+    "github.com/T-Prohmpossadhorn/go-core/logger"
+    "github.com/T-Prohmpossadhorn/go-core/rabbitmq"
+)
+
+func main() {
+    logger.Init()
+    defer logger.Sync()
+
+    cfg, _ := config.New()
+    rmq, _ := rabbitmq.New(cfg)
+    defer rmq.Close()
+
+    msgs, _ := rmq.Consume(context.Background(), "tasks")
+    for msg := range msgs {
+        fmt.Println(string(msg))
+    }
 }
 ```
+
+### Tracing with OpenTelemetry
+Enable tracing by setting `otel_enabled` to `true` and initializing the `otel` package:
+
+```go
+cfg, _ := config.New(config.WithDefault(map[string]interface{}{
+    "otel_enabled": true,
+}))
+
+// Use a mock exporter for local testing
+os.Setenv("OTEL_TEST_MOCK_EXPORTER", "true")
+defer os.Unsetenv("OTEL_TEST_MOCK_EXPORTER")
+_ = otel.Init(cfg)
+defer otel.Shutdown(context.Background())
+
+rmq, _ := rabbitmq.New(cfg)
+ctx := context.Background()
+_ = rmq.Publish(ctx, "tasks", []byte("traced message"))
+```
+
+Logs produced by `Publish` and `Consume` will include `trace_id` and `span_id` fields when tracing is enabled.
 
 ## Configuration
 | Key            | Type   | Default                                       |
-|----------------|-------|-----------------------------------------------|
+| -------------- | ------ | --------------------------------------------- |
 | `rabbitmq_url` | string | `amqp://guest:guest@localhost:5672/`           |
 | `otel_enabled` | bool   | `false`                                       |
 
+Configuration can be supplied via a YAML/JSON file or environment variables using the `config` package. Example environment variables:
+
+```bash
+export CONFIG_RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+export CONFIG_OTEL_ENABLED=true
+```
+
 ## Examples
-Run the publisher and consumer examples:
+Run the publisher and consumer examples located in `rabbitmq/examples`:
+
 ```bash
 go run ./rabbitmq/examples/publisher
 go run ./rabbitmq/examples/consumer
 ```
 
+## Testing
+Execute unit tests with coverage:
+
+```bash
+cd rabbitmq
+go test -v -cover
+```
+
+Tests verify publishing, consuming, and tracing behavior using the mock OpenTelemetry exporter. The package has small, fast-running tests that avoid network access.
+
+## Troubleshooting
+- **No Traces in Logs**: Ensure `otel_enabled` is set to `true` and `otel.Init` has been called.
+- **Context Cancellation**: Publishing or consuming operations return an error if the provided context is canceled.
+- **Queue Not Found**: Queues are created on demand when publishing or consuming; no additional setup is required.
+
+## Contributing
+Contributions are welcome! Please open issues or pull requests on GitHub. Run `go test ./...` and `gofmt` before submitting changes.
+
 ## License
-MIT License. See `LICENSE` file.
+MIT License. See the `LICENSE` file for details.
