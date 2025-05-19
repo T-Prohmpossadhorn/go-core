@@ -22,10 +22,41 @@ type Config struct {
 }
 
 // Kafka wraps kafka-go writers and readers to talk to a real Kafka broker.
+// writer defines the minimal interface needed from kafka-go writers.
+type writer interface {
+	WriteMessages(context.Context, ...kafka_go.Message) error
+	Close() error
+}
+
+// reader defines the minimal interface needed from kafka-go readers.
+type reader interface {
+	ReadMessage(context.Context) (kafka_go.Message, error)
+	Close() error
+}
+
+// writerFactoryFunc creates a writer for a topic.
+var writerFactoryFunc = func(brokers []string, topic string) writer {
+	return &kafka_go.Writer{
+		Addr:     kafka_go.TCP(brokers...),
+		Topic:    topic,
+		Balancer: &kafka_go.LeastBytes{},
+	}
+}
+
+// readerFactoryFunc creates a reader for a topic.
+var readerFactoryFunc = func(brokers []string, topic string) reader {
+	return kafka_go.NewReader(kafka_go.ReaderConfig{
+		Brokers: brokers,
+		Topic:   topic,
+		GroupID: "",
+	})
+}
+
+// Kafka wraps kafka-go writers and readers to talk to a real Kafka broker.
 type Kafka struct {
 	mu         sync.RWMutex
-	writers    map[string]*kafka_go.Writer
-	readers    map[string]*kafka_go.Reader
+	writers    map[string]writer
+	readers    map[string]reader
 	brokers    []string
 	cfg        Config
 	tracerName string
@@ -41,8 +72,8 @@ func New(c *config.Config) (*Kafka, error) {
 
 	brokers := strings.Split(cfg.Brokers, ",")
 	k := &Kafka{
-		writers:    make(map[string]*kafka_go.Writer),
-		readers:    make(map[string]*kafka_go.Reader),
+		writers:    make(map[string]writer),
+		readers:    make(map[string]reader),
 		brokers:    brokers,
 		cfg:        cfg,
 		tracerName: "kafka",
@@ -65,11 +96,7 @@ func (k *Kafka) Publish(ctx context.Context, topic string, body []byte) error {
 	k.mu.Lock()
 	w, ok := k.writers[topic]
 	if !ok {
-		w = &kafka_go.Writer{
-			Addr:     kafka_go.TCP(k.brokers...),
-			Topic:    topic,
-			Balancer: &kafka_go.LeastBytes{},
-		}
+		w = writerFactoryFunc(k.brokers, topic)
 		k.writers[topic] = w
 	}
 	k.mu.Unlock()
@@ -93,11 +120,7 @@ func (k *Kafka) Consume(ctx context.Context, topic string) (<-chan []byte, error
 	k.mu.Lock()
 	r, ok := k.readers[topic]
 	if !ok {
-		r = kafka_go.NewReader(kafka_go.ReaderConfig{
-			Brokers: k.brokers,
-			Topic:   topic,
-			GroupID: "",
-		})
+		r = readerFactoryFunc(k.brokers, topic)
 		k.readers[topic] = r
 	}
 	k.mu.Unlock()
@@ -127,8 +150,8 @@ func (k *Kafka) Close() error {
 	for _, r := range k.readers {
 		_ = r.Close()
 	}
-	k.writers = map[string]*kafka_go.Writer{}
-	k.readers = map[string]*kafka_go.Reader{}
+	k.writers = map[string]writer{}
+	k.readers = map[string]reader{}
 	logger.Info("Kafka closed")
 	return nil
 }
